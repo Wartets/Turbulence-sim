@@ -1,0 +1,20 @@
+So I'd like you to tell me what to change/replace/modify/delete in my code to make these additions/modifications/corrections
+Don't put any comments in the code But explain where to make the modifications outside the code, tell me what to delete/modify/add and where in the code
+If a function is not changed, don't give it to me
+Respect the indentation of my code
+Give me the complete modified versions of the functions or elements (don't give me the DOMContentLoaded, Simulation, etc constructors/class corrected in their entirety, give me their corrected modified sub-functions)
+If it is necessary to import libraries, do so.
+Give each modified functions or sub-functions separately, in the order of appearing in the code
+I'd like you to give me the corrected elements again without deleting any existing functionality
+You need to give me code without any comments in the code; never use `//`
+NEVER PUT COMMENTS IN THE CODE
+
+---
+
+I'd like you to create an architecture.md file that describes the entire website architecture for this project. I want the site to be really powerful; it absolutely must be able to simulate interactively with great precision and directly via an interface with almost instant feedback. Everything really needs to be excellent. I don't want a huge number of different files. It's possible to import libraries, but not many files. It needs to be a website with a fairly simple structure but practical functionality. I don't want to have to use Docker or similar services. I want to be able to launch the website from my command prompt and use it in my browser. C++ or C should be prioritized over Python, and even more so over JavaScript. The aesthetics of the interface aren't the most important thing right now; let's stick to the bare minimum in terms of layout.I'd like you to create an architecture.md file that describes the entire website architecture for this project. I want the site to be really powerful; it absolutely must be able to simulate interactively with great precision and directly via an interface with almost instant feedback. Everything really needs to be excellent. I don't want a huge number of different files. It's possible to import libraries, but not many files. It needs to be a website with a fairly simple structure but practical functionality. I don't want to have to use Docker or similar services. I want to be able to launch the website from my command prompt and use it in my browser. C++ or C should be prioritized over Python, and even more so over JavaScript. The aesthetics of the interface aren't the most important thing right now; let's stick to the bare minimum in terms of layout.
+I want a maximum of 10 files
+
+Give me the prompt code for my Windows command prompt to generate just each file and folder so I don't have to do it manually. Don't put the contents in them, just generate the files. 
+
+Give me the complete contents of each file, including content within quotation markslike theses ```. Minimize the number of comments in the code. Don't tell me how to launch the application afterward; I just want the contents of each file.
+

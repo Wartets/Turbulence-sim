@@ -1,147 +1,120 @@
-# Fiche d’architecture – turbulence-sim
+# Architecture: Turbulence C++ Simulator
 
-## 1. Objectif général
-Le projet “turbulence-sim” est un simulateur numérique de turbulence basé sur les équations de Navier–Stokes.  
-L’architecture est conçue pour être simple, claire et structurée, tout en restant ouverte à des ajouts futurs.  
-La structure est pensée pour séparer clairement la **représentation du domaine**, la **gestion des champs**, la **physique**, l’**I/O**, et l’**interface Python**.
+## 1. Overview
+This project is a **client-side, high-performance web application**. It uses C++ for the physics engine, compiled to WebAssembly (Wasm) via Emscripten. This allows the simulation to run locally in the user's browser with near-native speed, communicating directly with WebGL for visualization without server round-trips.
 
----
+*   **Core Physics:** C++17 (Navier-Stokes Solver).
+*   **Compilation:** Emscripten (C++ $\to$ `.wasm` + `.js` glue).
+*   **Rendering:** WebGL 2.0 (via JavaScript Canvas API).
+*   **Interface:** HTML5/CSS3 (Minimalist).
+*   **Runtime:** Local Browser (launched via Python/Node simple HTTP server).
 
-## 2. Structure du projet
+## 2. Design Principles
+1.  **Zero Latency:** The simulation step happens in the browser's main thread (or web worker). The UI updates synchronously with the physics.
+2.  **Shared Memory:** JavaScript accesses the C++ memory heap directly (views) to upload texture data to the GPU, avoiding expensive object serialization.
+3.  **Minimal Files:** The entire project consists of less than 10 source files.
 
-```
-turbulence-sim/
+## 3. Tech Stack & Dependencies
+*   **Compiler:** `emcc` (Emscripten SDK).
+*   **Languages:**
+    *   **C++:** 90% of the logic (Physics, Memory Management, Solver).
+    *   **GLSL:** 5% (Shaders for coloring vorticity/velocity).
+    *   **JavaScript:** 5% (Boilerplate to initialize Wasm and context).
+*   **No Docker:** Runs on any machine with `emcc` and a browser.
+
+## 4. File Structure (Max 10 Files)
+
+We will use a flat, simple structure.
+
+``text
+/project-root
+│
+├── Makefile             # One-command build script
+├── README.md            # Documentation and Launch instructions
+│
 ├── src/
-│	├── bc.cpp
-│	├── bc.h
-│	├── field.cpp
-│	├── field.h
-│	├── grid.cpp
-│	├── grid.h
-│	├── io.cpp
-│	└── io.h
-│	├── main.cpp
-│	├── solver.cpp
-│	├── solver.h
-├── python/
-│	├── bindings.cpp
-│	├── CMakeLists.txt
-│	└── scripts/
-│		└── run.py
-├── tests/
-│	└── test_solver.cpp
-├── architecture.md
-├── CMakeLists.txt
-├── config.yaml
-└── README.md
-```
+│   ├── engine.cpp       # CORE: The Navier-Stokes solver & Emscripten bindings
+│   └── engine.h         # Headers, Constants, and Data Structures
+│
+├── web/
+│   ├── index.html       # The GUI container
+│   ├── style.css        # Minimal layout
+│   ├── main.js          # Entry point, Loop management, UI Event listeners
+│   ├── renderer.js      # WebGL setup and Texture management
+│   └── shaders.js       # GLSL Vertex and Fragment shaders (as strings)
+``
 
----
+*(Note: The build process will generate `engine.js` and `engine.wasm` into the `web/` folder, but these are build artifacts, not source files.)*
 
-## 3. Description détaillée des modules
+## 5. Module Descriptions
 
-### 3.1 Module `grid`
-**Responsabilité :** définir et représenter le domaine de simulation.
+### A. The Physics Engine (`src/engine.cpp`, `src/engine.h`)
+**Role:** The heavy lifter.
+**Paradigm:** We will use the **Lattice Boltzmann Method (LBM)** (D2Q9 model) or a **Stable Fluids** (Semi-Lagrangian) approach. LBM is preferred for interactive turbulence as it is inherently parallelizable and handles complex boundaries well.
 
-- Représente la géométrie du domaine (dimensions, taille, pas de grille).
-- Gère l’indexation (conversion indices 3D → index 1D).
-- Fournit les propriétés de la grille : taille, nombre de points, pas, périodicité.
-- Centralise toutes les informations sur la structure spatiale du problème.
+*   **Data:** Stores flattened 1D arrays representing 2D grids (Velocity X, Velocity Y, Density/Pressure, Curl).
+*   **Solver:**
+    *   `init(width, height, viscosity)`: Allocates memory.
+    *   `step(dt)`: Performs collision and streaming steps (Navier-Stokes approximation).
+    *   `interact(x, y, force_x, force_y)`: Applies user mouse forces.
+*   **Bindings (EMSCRIPTEN_BINDINGS):** Exposes the C++ class methods to JavaScript and, crucially, provides functions to get memory pointers (`getVelocityBufferPointer()`) so JS can read data without copying.
 
-### 3.2 Module `field`
-**Responsabilité :** stocker et manipuler les champs physiques.
+### B. The Frontend (`web/index.html`, `web/style.css`)
+**Role:** Container and Controls.
+*   Contains a full-screen `<canvas>`.
+*   A minimal overlay dashboard (HTML) for parameter tuning (Viscosity, Reynolds Number, Color Map selection).
 
-- Contient les données numériques des champs (vitesse, pression, etc.).
-- Définit un champ scalaire et un champ vectoriel.
-- Offre des méthodes de base pour :
-  - initialisation,
-  - accès et modification des valeurs,
-  - copie et reset,
-  - opérations élémentaires (addition, multiplication, etc.).
-- Assure la cohérence de la mémoire et des dimensions.
+### C. The Bridge & Loop (`web/main.js`)
+**Role:** Orchestration.
+1.  Loads the `engine.wasm` module.
+2.  Instantiates the C++ `FluidSolver` class.
+3.  Sets up the `requestAnimationFrame` loop.
+4.  **The Loop:**
+    *   Call C++: `solver.step()`
+    *   Get Pointer: `ptr = solver.getOutputPtr()`
+    *   Call JS: `renderer.draw(ptr)`
+5.  Handles Mouse/Touch events and passes coordinates to C++.
 
-### 3.3 Module `bc`
-**Responsabilité :** appliquer les conditions aux limites.
+### D. The Renderer (`web/renderer.js`, `web/shaders.js`)
+**Role:** Visualization.
+Instead of drawing pixel-by-pixel (slow), we use WebGL 2.0.
+1.  **Texture:** Creates a texture where the raw bytes from the C++ memory are uploaded.
+2.  **Shaders (`shaders.js`):**
+    *   *Vertex Shader:* Simple quad rendering.
+    *   *Fragment Shader:* Takes the raw velocity/density data and applies a colormap (e.g., Jet, Magma, Viridis) to visualize Vorticity or Velocity magnitude. This happens on the GPU.
 
-- Gère les conditions aux limites sur les champs.
-- Centralise la logique des différentes BC : Dirichlet, Neumann, Periodic, No-slip, etc.
-- Sépare la logique des BC de la logique du solveur.
-- Permet de modifier ou ajouter des BC sans toucher au solver.
+## 6. Data Flow
 
-### 3.4 Module `solver`
-**Responsabilité :** faire évoluer la simulation dans le temps.
+``mermaid
+graph TD
+    User[User Input] -->|Mouse/Params| JS[main.js]
+    JS -->|Function Call| CPP[C++ Engine (Wasm)]
+    CPP -->|Physics Step| MEM[C++ Linear Memory]
+    MEM -->|Direct View (Float32Array)| JS
+    JS -->|glTexImage2D| GPU[WebGL Texture]
+    GPU -->|Fragment Shader| Screen[Canvas]
+``
 
-- Implémente l’intégration temporelle des équations de Navier–Stokes.
-- Gère les champs nécessaires (vitesse, pression, etc.).
-- Applique les étapes de calcul :
-  - calcul des dérivées,
-  - mise à jour de la vitesse,
-  - résolution de la contrainte d’incompressibilité (projection),
-  - application des BC,
-  - gestion du pas de temps et de la boucle principale.
-- Encapsule la logique numérique et la physique dans une interface unique.
+## 7. Build & Run Workflow
 
-### 3.5 Module `io`
-**Responsabilité :** sauvegarde et exportation des résultats.
+**1. Compilation (via Makefile):**
+``bash
+# Example command inside Makefile
+emcc src/engine.cpp -O3 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s 'EXPORT_NAME="createFluidEngine"' --bind -o web/engine.js
+``
+*   `-O3`: Max optimization.
+*   `--bind`: Enables Embind for easy C++ class mapping to JS.
 
-- Gère l’écriture des champs et des données de simulation sur disque.
-- Propose un format simple (CSV/VTK minimal) pour visualisation et analyse.
-- Assure la séparation entre le calcul et la persistance des résultats.
-- Permet de sauvegarder régulièrement l’état de la simulation.
+**2. Execution:**
+Since Wasm cannot load over the `file://` protocol due to CORS security:
+``bash
+# Launch generic python server
+python3 -m http.server 8000
+# Open browser to localhost:8000/web
+``
 
-### 3.6 Module `main`
-**Responsabilité :** orchestrer l’exécution globale.
-
-- Charge la configuration (config.yaml).
-- Initialise le domaine (`grid`), les champs (`field`) et le solveur (`solver`).
-- Lance la boucle de simulation.
-- Déclenche les sauvegardes via le module `io`.
-
-### 3.7 Module Python
-**Responsabilité :** interface Python via pybind11.
-
-- Expose les fonctionnalités essentielles du simulateur à Python.
-- Permet de lancer une simulation depuis un script Python.
-- Facilite le contrôle, la configuration et l’analyse des résultats.
-- Fournit une API simple et intuitive pour interagir avec le simulateur.
-
----
-
-## 4. Modules à importer (dépendances)
-- C++ standard (C++20)
-- pybind11 (pour l’interface Python)
-- (optionnel) bibliothèques C++ standards pour la gestion de fichiers et des conteneurs
-
-### Python
-- PyYAML (lecture config)
-- NumPy (analyse)
-- Matplotlib (visualisation)
-
----
-
-## 5. Fonctionnement global (flux de données)
-
-1. **Lecture de la configuration**
-   - `main` lit `config.yaml`
-   - crée la grille (`grid`) et les paramètres
-
-2. **Initialisation**
-   - `solver` crée les champs (`field`)
-   - initialise les conditions initiales
-   - applique les conditions aux limites via `bc`
-
-3. **Boucle de simulation**
-   - `solver` exécute `step()` en boucle
-   - à chaque étape :
-     - calcul des dérivées
-     - mise à jour des champs
-     - application des BC
-     - éventuellement sauvegarde via `io`
-
-4. **Sortie**
-   - `io` écrit les résultats
-   - fin de simulation
-
-5. **Python**
-   - `bindings` expose le simulateur
-   - `run.py` orchestre la simulation depuis Python
+## 8. Why this fits your needs
+*   **Power & Precision:** C++ allows you to use `double` or `float` arrays and optimize cache locality manually.
+*   **Instant Feedback:** The simulation runs at the screen refresh rate (60-144Hz) because no data travels over the network.
+*   **Simplicity:** No frameworks (React/Vue/Docker). Just raw C++ and standard Web APIs.
+*   **File Count:** Only 9 source files. Clean and maintainable.

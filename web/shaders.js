@@ -86,6 +86,10 @@ vec3 getPalette(float val, int scheme) {
 
 void main() {
     float is_obstacle = step(0.5, texture(u_obstacles, v_uv).r);
+    if (is_obstacle > 0.5) {
+        outColor = vec4(u_obstacle_color, 1.0);
+        return;
+    }
 
     float ux = texture(u_velocity_x, v_uv).r;
     float uy = texture(u_velocity_y, v_uv).r;
@@ -118,7 +122,7 @@ void main() {
     float intensity = clamp(length(fluid_color) * 5.0, 0.0, 1.0);
     vec3 final_fluid_color = mix(base_color, fluid_color, intensity);
 
-    outColor = vec4(mix(final_fluid_color, u_obstacle_color, is_obstacle), 1.0);
+    outColor = vec4(final_fluid_color, 1.0);
 }
 `;
 

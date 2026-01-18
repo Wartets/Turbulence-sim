@@ -102,6 +102,9 @@ createFluidEngine().then(Module => {
     let renderer = null;
     let particles = null;
     let requestId = null;
+    const fpsCounter = document.getElementById('fps-counter');
+    let lastTime = 0;
+    let frameCount = 0;
 
     const params = {
         resolutionScale: 300,
@@ -384,6 +387,15 @@ createFluidEngine().then(Module => {
             const canvasRadius = (brush.size / simWidth) * canvas.width;
             const color = brush.erase ? [1.0, 0.2, 0.2, 0.7] : [1.0, 1.0, 1.0, 0.7];
             renderer.drawBrush(mouse.x, mouse.y, canvasRadius, color);
+        }
+
+        const currentTime = performance.now();
+        frameCount++;
+        if (currentTime > lastTime + 1000) {
+            const fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
+            fpsCounter.textContent = `FPS: ${fps}`;
+            lastTime = currentTime;
+            frameCount = 0;
         }
 
         requestId = requestAnimationFrame(loop);

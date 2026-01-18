@@ -14,21 +14,15 @@ canvas {
     height: 100%;
 }
 
-#controls {
+#fps-counter {
     position: absolute;
-    top: 20px;
-    left: 20px;
-    background: rgba(20, 20, 30, 0.85);
-    color: #fff;
-    padding: 15px;
-    border-radius: 8px;
-    width: 250px;
-    backdrop-filter: blur(5px);
-    border: 1px solid rgba(255,255,255,0.1);
+    top: 0px;
+    left: 0px;
+    background-color: rgba(0, 0, 0, 0.5);
+    color: white;
+    padding: 1px 2px;
+    border-radius: 3px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 11px;
+    z-index: 100;
 }
-
-#controls h3 { margin-top: 0; font-size: 16px; border-bottom: 1px solid #444; padding-bottom: 5px;}
-#controls label { display: block; margin: 10px 0; font-size: 12px; }
-#controls input { width: 100%; margin-top: 5px; }
-.stats { margin-top: 10px; font-size: 12px; color: #aaa; }
-.hint { font-size: 11px; color: #888; font-style: italic;}

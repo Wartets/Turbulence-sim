@@ -11,7 +11,7 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f) {
     int size = w * h;
     f.resize(size * 9);
     f_new.resize(size * 9);
@@ -21,6 +21,8 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     barriers.resize(size, 0);
     dye.resize(size, 0.0f);
     dye_new.resize(size, 0.0f);
+    temperature.resize(size, 0.0f);
+    temperature_new.resize(size, 0.0f);
 
     for (int i = 0; i < size; ++i) {
         float feq[9];
@@ -58,6 +60,27 @@ void FluidEngine::setDt(float newDt) {
 void FluidEngine::setGravity(float gx, float gy) {
     gravityX = gx;
     gravityY = gy;
+}
+
+void FluidEngine::setBuoyancy(float b) {
+    buoyancy = b;
+}
+
+void FluidEngine::setThermalDiffusivity(float td) {
+    thermalDiffusivity = td;
+}
+
+void FluidEngine::setVorticityConfinement(float vc) {
+    vorticityConfinement = vc;
+}
+
+void FluidEngine::addTemperature(int x, int y, float amount) {
+    if (x < 0 || x >= w || y < 0 || y >= h) return;
+    int idx = y * w + x;
+    
+    if (barriers[idx]) return;
+
+    temperature[idx] += amount;
 }
 
 void FluidEngine::limitVelocity(float &u, float &v) {
@@ -110,6 +133,7 @@ void FluidEngine::addObstacle(int x, int y, int radius, bool remove) {
                         uy[idx] = 0.0f;
                         rho[idx] = 1.0f;
                         dye[idx] = 0.0f;
+                        temperature[idx] = 0.0f;
                         float feq[9];
                         equilibrium(1.0f, 0.0f, 0.0f, feq);
                         for(int k=0; k<9; ++k) f[idx * 9 + k] = feq[k];
@@ -127,6 +151,7 @@ void FluidEngine::reset() {
     std::fill(uy.begin(), uy.end(), 0.0f);
     std::fill(barriers.begin(), barriers.end(), 0);
     std::fill(dye.begin(), dye.end(), 0.0f);
+    std::fill(temperature.begin(), temperature.end(), 0.0f);
 
     float feq[9];
     equilibrium(1.0f, 0.0f, 0.0f, feq);
@@ -151,6 +176,7 @@ void FluidEngine::clearRegion(int x, int y, int radius) {
                     ux[idx] = 0.0f;
                     uy[idx] = 0.0f;
                     dye[idx] = 0.0f;
+                    temperature[idx] = 0.0f;
 
                     float feq[9];
                     equilibrium(1.0f, 0.0f, 0.0f, feq);
@@ -165,23 +191,19 @@ void FluidEngine::step(int iterations) {
     for(int i=0; i<iterations; ++i) {
         collideAndStream();
         advectDye();
+        advectTemperature();
     }
 }
 
 void FluidEngine::collideAndStream() {
     int size = w * h;
 
-    for (int i = 0; i < size; ++i) {
-        if (barriers[i]) {
-            rho[i] = 1.0f;
-            ux[i] = 0.0f;
-            uy[i] = 0.0f;
-            for(int k=0; k<9; ++k) {
-                f_new[i*9 + k] = f[i*9 + k];
-            }
-            continue;
-        }
+    std::vector<float> forceX(size, 0.0f);
+    std::vector<float> forceY(size, 0.0f);
 
+    for (int i = 0; i < size; ++i) {
+        if (barriers[i]) continue;
+        
         float r = 0.0f;
         float u_val = 0.0f;
         float v_val = 0.0f;
@@ -199,16 +221,60 @@ void FluidEngine::collideAndStream() {
             v_val /= r;
         }
         
-        u_val += gravityX * dt;
-        v_val += gravityY * dt;
-
         rho[i] = r;
-        limitVelocity(u_val, v_val);
         ux[i] = u_val;
         uy[i] = v_val;
+    }
+
+    if (vorticityConfinement > 0.0f) {
+        std::vector<float> curl(size, 0.0f);
+        for (int y = 1; y < h - 1; ++y) {
+            for (int x = 1; x < w - 1; ++x) {
+                int idx = y * w + x;
+                if (barriers[idx] || barriers[idx+1] || barriers[idx-1] || barriers[idx+w] || barriers[idx-w]) continue;
+                curl[idx] = uy[idx + 1] - uy[idx - 1] - (ux[idx + w] - ux[idx - w]);
+            }
+        }
+        
+        for (int y = 1; y < h - 1; ++y) {
+            for (int x = 1; x < w - 1; ++x) {
+                int idx = y * w + x;
+                if (barriers[idx]) continue;
+                
+                float dc_dx = (std::abs(curl[idx + 1]) - std::abs(curl[idx - 1])) * 0.5f;
+                float dc_dy = (std::abs(curl[idx + w]) - std::abs(curl[idx - w])) * 0.5f;
+                float mag_grad = std::sqrt(dc_dx * dc_dx + dc_dy * dc_dy);
+                
+                if (mag_grad > 1e-6f) {
+                    forceX[idx] = vorticityConfinement * (dc_dy / mag_grad) * curl[idx];
+                    forceY[idx] = vorticityConfinement * (-dc_dx / mag_grad) * curl[idx];
+                }
+            }
+        }
+    }
+    
+    for (int i = 0; i < size; ++i) {
+        if (barriers[i]) {
+            rho[i] = 1.0f;
+            ux[i] = 0.0f;
+            uy[i] = 0.0f;
+            float feq[9];
+            equilibrium(1.0f, 0.0f, 0.0f, feq);
+            for(int k=0; k<9; ++k) {
+                f_new[i*9 + k] = feq[k];
+            }
+            continue;
+        }
+
+        float u_final = ux[i] + (gravityX + forceX[i]) * dt;
+        float v_final = uy[i] + (gravityY + buoyancy * temperature[i] + forceY[i]) * dt;
+
+        limitVelocity(u_final, v_final);
+        ux[i] = u_final;
+        uy[i] = v_final;
 
         float feq[9];
-        equilibrium(rho[i], u_val, v_val, feq);
+        equilibrium(rho[i], u_final, v_final, feq);
 
         for (int k = 0; k < 9; ++k) {
             f_new[i*9 + k] = f[i*9 + k] * (1.0f - omega) + feq[k] * omega;
@@ -334,6 +400,53 @@ val FluidEngine::getDyeView() {
     return val(typed_memory_view(w * h, dye.data()));
 }
 
+void FluidEngine::advectTemperature() {
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            int idx = y * w + x;
+            if (barriers[idx]) {
+                temperature_new[idx] = 0.0f;
+                continue;
+            }
+
+            float x_prev = (float)x - ux[idx] * dt;
+            float y_prev = (float)y - uy[idx] * dt;
+
+            if (x_prev < 0.5f) x_prev = 0.5f;
+            if (x_prev > w - 1.5f) x_prev = w - 1.5f;
+            if (y_prev < 0.5f) y_prev = 0.5f;
+            if (y_prev > h - 1.5f) y_prev = h - 1.5f;
+
+            int ix = static_cast<int>(x_prev);
+            int iy = static_cast<int>(y_prev);
+            float fx = x_prev - ix;
+            float fy = y_prev - iy;
+
+            int idx_tl = iy * w + ix;
+            int idx_tr = idx_tl + 1;
+            int idx_bl = (iy + 1) * w + ix;
+            int idx_br = idx_bl + 1;
+
+            float t_tl = barriers[idx_tl] ? 0.0f : temperature[idx_tl];
+            float t_tr = barriers[idx_tr] ? 0.0f : temperature[idx_tr];
+            float t_bl = barriers[idx_bl] ? 0.0f : temperature[idx_bl];
+            float t_br = barriers[idx_br] ? 0.0f : temperature[idx_br];
+            
+            float interpolated_temp = (1.0f - fx) * (1.0f - fy) * t_tl +
+                                     fx * (1.0f - fy) * t_tr +
+                                     (1.0f - fx) * fy * t_bl +
+                                     fx * fy * t_br;
+            
+            temperature_new[idx] = interpolated_temp * (1.0f - thermalDiffusivity);
+        }
+    }
+    temperature.swap(temperature_new);
+}
+
+val FluidEngine::getTemperatureView() {
+    return val(typed_memory_view(w * h, temperature.data()));
+}
+
 val FluidEngine::getDensityView() {
     return val(typed_memory_view(w * h, rho.data()));
 }
@@ -356,11 +469,15 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("step", &FluidEngine::step)
         .function("addForce", &FluidEngine::addForce)
         .function("addDensity", &FluidEngine::addDensity)
+        .function("addTemperature", &FluidEngine::addTemperature)
         .function("setViscosity", &FluidEngine::setViscosity)
         .function("setDecay", &FluidEngine::setDecay)
         .function("setDt", &FluidEngine::setDt)
         .function("setGravity", &FluidEngine::setGravity)
         .function("setBoundaryType", &FluidEngine::setBoundaryType)
+        .function("setBuoyancy", &FluidEngine::setBuoyancy)
+        .function("setThermalDiffusivity", &FluidEngine::setThermalDiffusivity)
+        .function("setVorticityConfinement", &FluidEngine::setVorticityConfinement)
         .function("reset", &FluidEngine::reset)
         .function("clearRegion", &FluidEngine::clearRegion)
         .function("addObstacle", &FluidEngine::addObstacle)
@@ -368,5 +485,6 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("getVelocityXView", &FluidEngine::getVelocityXView)
         .function("getVelocityYView", &FluidEngine::getVelocityYView)
         .function("getBarrierView", &FluidEngine::getBarrierView)
-        .function("getDyeView", &FluidEngine::getDyeView);
+        .function("getDyeView", &FluidEngine::getDyeView)
+        .function("getTemperatureView", &FluidEngine::getTemperatureView);
 }

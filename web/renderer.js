@@ -22,6 +22,7 @@ class Renderer {
         this.texRho = this.createTexture(this.gl.R32F, this.gl.FLOAT);
         this.texObstacles = this.createTexture(this.gl.R8, this.gl.UNSIGNED_BYTE);
         this.texDye = this.createTexture(this.gl.R32F, this.gl.FLOAT);
+        this.texTemperature = this.createTexture(this.gl.R32F, this.gl.FLOAT);
 
         this.quadBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
@@ -48,6 +49,7 @@ class Renderer {
             density: this.gl.getUniformLocation(this.program, "u_density"),
             obstacles: this.gl.getUniformLocation(this.program, "u_obstacles"),
             dye: this.gl.getUniformLocation(this.program, "u_dye"),
+            temperature: this.gl.getUniformLocation(this.program, "u_temperature"),
             mode: this.gl.getUniformLocation(this.program, "u_mode"),
             contrast: this.gl.getUniformLocation(this.program, "u_contrast"),
             brightness: this.gl.getUniformLocation(this.program, "u_brightness"),
@@ -92,7 +94,7 @@ class Renderer {
         return t;
     }
 
-    draw(uxData, uyData, rhoData, barrierData, dyeData, params) {
+    draw(uxData, uyData, rhoData, barrierData, dyeData, tempData, params) {
         this.gl.disable(this.gl.BLEND);
         this.gl.useProgram(this.program);
         this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
@@ -126,6 +128,11 @@ class Renderer {
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.texDye);
         this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, dyeData);
         this.gl.uniform1i(this.uniforms.dye, 4);
+
+        this.gl.activeTexture(this.gl.TEXTURE5);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texTemperature);
+        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, tempData);
+        this.gl.uniform1i(this.uniforms.temperature, 5);
 
         this.gl.uniform1i(this.uniforms.mode, params.mode);
         this.gl.uniform1f(this.uniforms.contrast, params.contrast);

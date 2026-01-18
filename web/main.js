@@ -194,14 +194,19 @@ createFluidEngine().then(Module => {
 
     const updateBrushUI = () => {
         const type = params.brush.type;
+
         const isObstacle = type === 'obstacle';
         const isVortex = type === 'vortex';
-        
-        strengthController.domElement.parentElement.style.display = isObstacle ? 'none' : '';
-        falloffController.domElement.parentElement.style.display = isObstacle ? 'none' : '';
-        vortexController.domElement.parentElement.style.display = isVortex ? '' : 'none';
 
-        eraseController.name(isObstacle ? 'Remove Obstacle' : 'Eraser');
+        strengthController.show(!isObstacle);
+        falloffController.show(!isObstacle);
+        vortexController.show(isVortex);
+
+        if (isObstacle) {
+            eraseController.name('Remove Obstacle');
+        } else {
+            eraseController.name('Eraser');
+        }
     };
     brushTypeController.onChange(updateBrushUI);
 

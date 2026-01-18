@@ -16,6 +16,7 @@ public:
     void setBuoyancy(float b);
     void setThermalDiffusivity(float td);
     void setVorticityConfinement(float vc);
+    void setMaxVelocity(float mv);
 
     emscripten::val getDensityView();
     emscripten::val getVelocityXView();
@@ -41,6 +42,7 @@ private:
     float buoyancy;
     float thermalDiffusivity;
     float vorticityConfinement;
+    float maxVelocity;
     
     std::vector<float> f;     
     std::vector<float> f_new; 

@@ -11,7 +11,7 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f) {
     int size = w * h;
     f.resize(size * 9);
     f_new.resize(size * 9);
@@ -84,13 +84,16 @@ void FluidEngine::addTemperature(int x, int y, float amount) {
 }
 
 void FluidEngine::limitVelocity(float &u, float &v) {
-    const float max_vel = 0.57f; 
     float speed = std::sqrt(u*u + v*v);
-    if (speed > max_vel) {
-        float ratio = max_vel / speed;
+    if (speed > maxVelocity) {
+        float ratio = maxVelocity / speed;
         u *= ratio;
         v *= ratio;
     }
+}
+
+void FluidEngine::setMaxVelocity(float mv) {
+    maxVelocity = mv;
 }
 
 void FluidEngine::addForce(int x, int y, float fx, float fy) {
@@ -478,6 +481,7 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("setBuoyancy", &FluidEngine::setBuoyancy)
         .function("setThermalDiffusivity", &FluidEngine::setThermalDiffusivity)
         .function("setVorticityConfinement", &FluidEngine::setVorticityConfinement)
+        .function("setMaxVelocity", &FluidEngine::setMaxVelocity)
         .function("reset", &FluidEngine::reset)
         .function("clearRegion", &FluidEngine::clearRegion)
         .function("addObstacle", &FluidEngine::addObstacle)

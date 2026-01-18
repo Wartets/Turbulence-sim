@@ -54,7 +54,15 @@ class Renderer {
             contrast: this.gl.getUniformLocation(this.program, "u_contrast"),
             brightness: this.gl.getUniformLocation(this.program, "u_brightness"),
             colorScheme: this.gl.getUniformLocation(this.program, "u_color_scheme"),
-            obstacleColor: this.gl.getUniformLocation(this.program, "u_obstacle_color")
+            obstacleColor: this.gl.getUniformLocation(this.program, "u_obstacle_color"),
+            backgroundColor: this.gl.getUniformLocation(this.program, "u_background_color"),
+            vorticityBipolar: this.gl.getUniformLocation(this.program, "u_vorticity_bipolar")
+        };
+        
+        this.particleUniforms = {
+            resolution: this.gl.getUniformLocation(this.particleProgram, "u_resolution"),
+            size: this.gl.getUniformLocation(this.particleProgram, "u_particle_size"),
+            color: this.gl.getUniformLocation(this.particleProgram, "u_particle_color")
         };
 
         this.brushUniforms = {
@@ -94,7 +102,7 @@ class Renderer {
         return t;
     }
 
-    draw(uxData, uyData, rhoData, barrierData, dyeData, tempData, params) {
+    draw(uxData, uyData, rhoData, barrierData, dyeData, tempData, vizParams) {
         this.gl.disable(this.gl.BLEND);
         this.gl.useProgram(this.program);
         this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
@@ -134,21 +142,29 @@ class Renderer {
         this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, tempData);
         this.gl.uniform1i(this.uniforms.temperature, 5);
 
-        this.gl.uniform1i(this.uniforms.mode, params.mode);
-        this.gl.uniform1f(this.uniforms.contrast, params.contrast);
-        this.gl.uniform1f(this.uniforms.brightness, params.brightness);
-        this.gl.uniform1i(this.uniforms.colorScheme, params.colorScheme);
+        this.gl.uniform1i(this.uniforms.mode, vizParams.mode);
+        this.gl.uniform1f(this.uniforms.contrast, vizParams.contrast);
+        this.gl.uniform1f(this.uniforms.brightness, vizParams.brightness);
+        this.gl.uniform1i(this.uniforms.colorScheme, vizParams.colorScheme);
 
-        const color = params.obstacleColor;
-        const r = parseInt(color.slice(1, 3), 16) / 255;
-        const g = parseInt(color.slice(3, 5), 16) / 255;
-        const b = parseInt(color.slice(5, 7), 16) / 255;
-        this.gl.uniform3f(this.uniforms.obstacleColor, r, g, b);
+        const ocolor = vizParams.obstacleColor;
+        const r_o = parseInt(ocolor.slice(1, 3), 16) / 255;
+        const g_o = parseInt(ocolor.slice(3, 5), 16) / 255;
+        const b_o = parseInt(ocolor.slice(5, 7), 16) / 255;
+        this.gl.uniform3f(this.uniforms.obstacleColor, r_o, g_o, b_o);
+        
+        const bgcolor = vizParams.backgroundColor;
+        const r_bg = parseInt(bgcolor.slice(1, 3), 16) / 255;
+        const g_bg = parseInt(bgcolor.slice(3, 5), 16) / 255;
+        const b_bg = parseInt(bgcolor.slice(5, 7), 16) / 255;
+        this.gl.uniform3f(this.uniforms.backgroundColor, r_bg, g_bg, b_bg);
+        
+        this.gl.uniform1i(this.uniforms.vorticityBipolar, vizParams.vorticityBipolar);
 
         this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
     }
 
-    drawParticles(particleData, count) {
+    drawParticles(particleData, count, params) {
         this.gl.enable(this.gl.BLEND);
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE);
 
@@ -160,7 +176,14 @@ class Renderer {
         this.gl.enableVertexAttribArray(posLoc);
         this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
         
-        this.gl.uniform2f(this.gl.getUniformLocation(this.particleProgram, "u_resolution"), this.gl.canvas.width, this.gl.canvas.height);
+        this.gl.uniform2f(this.particleUniforms.resolution, this.gl.canvas.width, this.gl.canvas.height);
+        this.gl.uniform1f(this.particleUniforms.size, params.particles.size);
+        
+        const pcolor = params.particles.color;
+        const r = parseInt(pcolor.slice(1, 3), 16) / 255;
+        const g = parseInt(pcolor.slice(3, 5), 16) / 255;
+        const b = parseInt(pcolor.slice(5, 7), 16) / 255;
+        this.gl.uniform4f(this.particleUniforms.color, r, g, b, params.particles.opacity);
         
         this.gl.drawArrays(this.gl.POINTS, 0, count);
         

@@ -20,6 +20,8 @@ uniform float u_contrast;
 uniform float u_brightness;
 uniform int u_color_scheme;
 uniform vec3 u_obstacle_color;
+uniform vec3 u_background_color;
+uniform bool u_vorticity_bipolar;
 
 in vec2 v_uv;
 out vec4 outColor;
@@ -72,6 +74,21 @@ vec3 turbo(float t) {
     );
 }
 
+vec3 cividis(float t) {
+    return vec3(
+        0.0033 + 1.2285*t - 6.4719*pow(t,2.0) + 10.3256*pow(t,3.0),
+        0.2031 + 2.0830*t - 3.8953*pow(t,2.0) + 2.1295*pow(t,3.0),
+        0.0898 - 0.1932*t + 2.2249*pow(t,2.0) - 1.2721*pow(t,3.0)
+    );
+}
+
+vec3 coolwarm(float t) {
+    float r = 0.2298 + 0.1983 * t + 2.0163 * t * t - 1.6364 * t * t * t;
+    float g = 0.2969 - 1.5332 * t + 2.1325 * t * t + 0.1531 * t * t * t;
+    float b = 0.7441 - 0.9020 * t - 1.8393 * t * t + 2.3353 * t * t * t;
+    return vec3(r,g,b);
+}
+
 vec3 getPalette(float val, int scheme) {
     val = clamp(val, 0.0, 1.0);
     switch(scheme) {
@@ -82,6 +99,8 @@ vec3 getPalette(float val, int scheme) {
         case 4: return turbo(val);
         case 5: return vec3(val);
         case 6: return vec3(0.1, 0.3, 0.6) + vec3(0.8, 0.7, 0.4) * val;
+        case 7: return cividis(val);
+        case 8: return coolwarm(val);
         default: return inferno(val);
     }
 }
@@ -102,11 +121,12 @@ void main() {
 
     if (u_mode == 0) { 
         float curl = (dFdx(uy) - dFdy(ux)) * 100.0;
-        float absCurl = abs(curl * u_contrast);
-        color = getPalette(absCurl, u_color_scheme);
-        
-        if (curl < 0.0 && u_color_scheme == 6) {
-             color = mix(vec3(0,0,0.5), vec3(1), clamp(absCurl, 0.0, 1.0));
+        if (u_vorticity_bipolar) {
+            val = curl * 0.5 * u_contrast + 0.5;
+            color = getPalette(val, u_color_scheme);
+        } else {
+            float absCurl = abs(curl * u_contrast);
+            color = getPalette(absCurl, u_color_scheme);
         }
     } 
     else if (u_mode == 1) { 
@@ -124,9 +144,8 @@ void main() {
     }
 
     vec3 fluid_color = color * u_brightness;
-    vec3 base_color = vec3(0.0, 0.01, 0.04);
     float intensity = clamp(length(fluid_color) * 5.0, 0.0, 1.0);
-    vec3 final_fluid_color = mix(base_color, fluid_color, intensity);
+    vec3 final_fluid_color = mix(u_background_color, fluid_color, intensity);
 
     outColor = vec4(final_fluid_color, 1.0);
 }
@@ -135,17 +154,19 @@ void main() {
 const PARTICLE_VS = `#version 300 es
 in vec2 a_position;
 uniform vec2 u_resolution;
+uniform float u_particle_size;
 void main() {
     vec2 clipSpace = (a_position / u_resolution) * 2.0 - 1.0;
     gl_Position = vec4(clipSpace * vec2(1, -1), 0.0, 1.0);
-    gl_PointSize = 1.5;
+    gl_PointSize = u_particle_size;
 }`;
 
 const PARTICLE_FS = `#version 300 es
 precision mediump float;
+uniform vec4 u_particle_color;
 out vec4 outColor;
 void main() {
-    outColor = vec4(1.0, 1.0, 1.0, 0.5);
+    outColor = u_particle_color;
 }`;
 
 const BRUSH_VS = `#version 300 es

@@ -107,9 +107,24 @@ createFluidEngine().then(Module => {
     let frameCount = 0;
 
     const params = {
-        resolutionScale: 250,
-        iterations: 5,
-        paused: false,
+        simulation: {
+            resolutionScale: 250,
+            iterations: 5,
+            paused: false,
+            dt: 1.5,
+        },
+
+        physics: {
+            viscosity: 0.8,
+            decay: 0.001,
+            boundary: 0,
+            gravityX: 0,
+            gravityY: 0,
+            buoyancy: 1.0,
+            thermalDiffusivity: 0.001,
+            vorticityConfinement: 0.1,
+            maxVelocity: 0.57,
+        },
 
         features: {
             enableGravity: true,
@@ -117,32 +132,33 @@ createFluidEngine().then(Module => {
             enableVorticity: true,
         },
         
-        viscosity: 0.8,
-        decay: 0.001,
-        dt: 1.5,
-        gravityX: 0,
-        gravityY: 0,
-        boundary: 0,
-        buoyancy: 1.0,
-        thermalDiffusivity: 0.001,
-        vorticityConfinement: 0.1,
+        visualization: {
+            mode: 1, 
+            colorScheme: 4, 
+            contrast: 1.5,
+            brightness: 1.0,
+            obstacleColor: '#4d4d4d',
+            backgroundColor: '#00020A',
+            vorticityBipolar: false,
+        },
         
-        mode: 1, 
-        colorScheme: 4, 
-        contrast: 1.5,
-        brightness: 1.0,
-        obstacleColor: '#4d4d4d',
-        
-        showParticles: false,
-        particleCount: 20000,
+        particles: {
+            show: false,
+            count: 20000,
+            size: 1.5,
+            opacity: 0.5,
+            color: '#ffffff',
+        },
 
         brush: {
             type: 'combined',
             size: 5,
-            strength: 0.8,
             falloff: 0.5,
             vortexDirection: 1,
-            erase: false
+            erase: false,
+            velocityStrength: 0.8,
+            densityStrength: 0.8,
+            temperatureStrength: 4.0,
         },
 
         reset: () => { 
@@ -157,7 +173,7 @@ createFluidEngine().then(Module => {
     const updateGravity = () => {
         if (!engine) return;
         if (params.features.enableGravity) {
-            engine.setGravity(params.gravityX, params.gravityY);
+            engine.setGravity(params.physics.gravityX, params.physics.gravityY);
         } else {
             engine.setGravity(0, 0);
         }
@@ -165,26 +181,29 @@ createFluidEngine().then(Module => {
 
     const updateBuoyancy = () => {
         if (!engine) return;
-        engine.setBuoyancy(params.features.enableBuoyancy ? params.buoyancy : 0);
+        engine.setBuoyancy(params.features.enableBuoyancy ? params.physics.buoyancy : 0);
     };
 
     const updateVorticity = () => {
         if (!engine) return;
-        engine.setVorticityConfinement(params.features.enableVorticity ? params.vorticityConfinement : 0);
+        engine.setVorticityConfinement(params.features.enableVorticity ? params.physics.vorticityConfinement : 0);
     };
 
-    const gui = new lil.GUI({ title: 'Turbulence Lab Pro' });
+    const gui = new lil.GUI({ title: 'Turbulence Simulation' });
     
     const simFolder = gui.addFolder('Simulation').close();
-    simFolder.add(params, 'resolutionScale', [100, 150, 200, 250, 300, 400, 600, 800]).name('Grid Resolution').onChange(initSimulation);
-    simFolder.add(params, 'iterations', 0, 20, 1).name('Iterations/Frame');
-    simFolder.add(params, 'paused').name('Pause');
+    simFolder.add(params.simulation, 'resolutionScale', [100, 150, 200, 250, 300, 400, 600, 800]).name('Grid Resolution').onChange(initSimulation);
+    simFolder.add(params.simulation, 'iterations', 0, 20, 1).name('Iterations/Frame');
+    simFolder.add(params.simulation, 'dt', 0.01, 2.0).name('Time Step (dt)').step(0.01).onChange(t => engine && engine.setDt(t));
+    simFolder.add(params.simulation, 'paused').name('Pause');
 
     const physicsFolder = gui.addFolder('Physics');
-    physicsFolder.add(params, 'viscosity', 0.001, 10).name('Viscosity').step(0.001).onChange(v => engine && engine.setViscosity(v));
-    physicsFolder.add(params, 'decay', 0.0, 0.05).name('Dissipation').step(0.0001).onChange(d => engine && engine.setDecay(d));
-    physicsFolder.add(params, 'dt', 0.01, 2.0).name('Time Step (dt)').step(0.01).onChange(t => engine && engine.setDt(t));
-    physicsFolder.add(params, 'boundary', { 
+    
+    physicsFolder.add(params, 'reset').name('Reset Fluid');
+
+    physicsFolder.add(params.physics, 'viscosity', 0.001, 10).name('Viscosity').step(0.001).onChange(v => engine && engine.setViscosity(v));
+    physicsFolder.add(params.physics, 'decay', 0.0, 0.05).name('Dissipation').step(0.0001).onChange(d => engine && engine.setDecay(d));
+    physicsFolder.add(params.physics, 'boundary', { 
         'Periodic': 0, 
         'Box': 1, 
         'Channel X': 2, 
@@ -192,10 +211,13 @@ createFluidEngine().then(Module => {
         'Slip Box': 4,
         'Slip Channel X': 5
     }).name('Boundaries').onChange(b => engine && engine.setBoundaryType(parseInt(b)));
+    
+    const advancedPhysicsFolder = physicsFolder.addFolder('Advanced').close();
+    advancedPhysicsFolder.add(params.physics, 'maxVelocity', 0.01, 1.0).name('Max Velocity (Stability)').step(0.01).onChange(v => engine && engine.setMaxVelocity(v));
 
     const gravityFolder = physicsFolder.addFolder('Gravity');
-    const gravityXController = gravityFolder.add(params, 'gravityX', -10, 10).name('X Component').step(0.01).onChange(updateGravity);
-    const gravityYController = gravityFolder.add(params, 'gravityY', -10, 10).name('Y Component').step(0.01).onChange(updateGravity);
+    const gravityXController = gravityFolder.add(params.physics, 'gravityX', -10, 10).name('X Component').step(0.01).onChange(updateGravity);
+    const gravityYController = gravityFolder.add(params.physics, 'gravityY', -10, 10).name('Y Component').step(0.01).onChange(updateGravity);
     gravityFolder.add(params.features, 'enableGravity').name('Enable').onChange(enabled => {
         gravityXController.enable(enabled);
         gravityYController.enable(enabled);
@@ -203,43 +225,50 @@ createFluidEngine().then(Module => {
     });
 
     const vorticityFolder = physicsFolder.addFolder('Vorticity');
-    const vorticityController = vorticityFolder.add(params, 'vorticityConfinement', 0, 1.0).name('Strength').step(0.01).onChange(updateVorticity);
+    const vorticityController = vorticityFolder.add(params.physics, 'vorticityConfinement', 0, 1.0).name('Strength').step(0.01).onChange(updateVorticity);
     vorticityFolder.add(params.features, 'enableVorticity').name('Enable').onChange(enabled => {
         vorticityController.enable(enabled);
         updateVorticity();
     });
 
     const buoyancyFolder = physicsFolder.addFolder('Buoyancy').close();
-    const buoyancyController = buoyancyFolder.add(params, 'buoyancy', 0, 5.0).name('Strength').step(0.01).onChange(updateBuoyancy);
-    buoyancyFolder.add(params, 'thermalDiffusivity', 0.0, 0.05).name('Diffusivity').step(0.0001).onChange(d => engine && engine.setThermalDiffusivity(d));
+    const buoyancyController = buoyancyFolder.add(params.physics, 'buoyancy', 0, 5.0).name('Strength').step(0.01).onChange(updateBuoyancy);
+    buoyancyFolder.add(params.physics, 'thermalDiffusivity', 0.0, 0.05).name('Diffusivity').step(0.0001).onChange(d => engine && engine.setThermalDiffusivity(d));
     buoyancyFolder.add(params.features, 'enableBuoyancy').name('Enable').onChange(enabled => {
         buoyancyController.enable(enabled);
         updateBuoyancy();
     });
-    
-    physicsFolder.add(params, 'reset').name('Reset Fluid');
 
     const viewFolder = gui.addFolder('Visualization');
-    viewFolder.add(params, 'mode', { 'Vorticity': 0, 'Velocity': 1, 'Density': 2, 'Temperature': 3 }).name('Field');
-    viewFolder.add(params, 'colorScheme', { 
+    viewFolder.add(params.visualization, 'mode', { 'Vorticity': 0, 'Velocity': 1, 'Density': 2, 'Temperature': 3 }).name('Field');
+    viewFolder.add(params.visualization, 'colorScheme', { 
         'Inferno': 0, 'Magma': 1, 'Plasma': 2, 'Viridis': 3,
-        'Turbo': 4, 'Grayscale': 5, 'Ice': 6
+        'Turbo': 4, 'Grayscale': 5, 'Ice': 6, 'Cividis': 7, 'Coolwarm': 8
     }).name('Palette');
-    viewFolder.add(params, 'contrast', 0.1, 5.0).name('Contrast').step(0.05);
-    viewFolder.add(params, 'brightness', 0.1, 2.0).name('Brightness').step(0.05);
-    viewFolder.addColor(params, 'obstacleColor').name('Obstacle Color');
-    viewFolder.add(params, 'showParticles').name('Show Particles');
-    viewFolder.add(params, 'particleCount', 0, 50000, 1000).name('Particle Count').onChange(count => {
+    viewFolder.add(params.visualization, 'contrast', 0.1, 5.0).name('Contrast').step(0.05);
+    viewFolder.add(params.visualization, 'brightness', 0.1, 2.0).name('Brightness').step(0.05);
+    viewFolder.addColor(params.visualization, 'obstacleColor').name('Obstacle Color');
+    viewFolder.addColor(params.visualization, 'backgroundColor').name('Background Color');
+    viewFolder.add(params.visualization, 'vorticityBipolar').name('Bipolar Vorticity');
+    
+    const particleFolder = viewFolder.addFolder('Particles');
+    particleFolder.add(params.particles, 'show').name('Show Particles');
+    particleFolder.add(params.particles, 'count', 0, 50000, 1000).name('Particle Count').onChange(count => {
         if (particles && engine) {
             const barrierArray = engine.getBarrierView();
             particles.setCount(count, barrierArray, simWidth, simHeight);
         }
     });
+    particleFolder.add(params.particles, 'size', 0.1, 10.0).name('Size');
+    particleFolder.add(params.particles, 'opacity', 0.0, 1.0).name('Opacity');
+    particleFolder.addColor(params.particles, 'color').name('Color');
 
     const inputFolder = gui.addFolder('Interaction');
     const brushTypeController = inputFolder.add(params.brush, 'type', ['combined', 'velocity', 'density', 'temperature', 'vortex', 'obstacle']).name('Brush Mode');
     inputFolder.add(params.brush, 'size', 1, 100).name('Radius');
-    const strengthController = inputFolder.add(params.brush, 'strength', 0.01, 10.0).name('Strength').step(0.01);
+    const velocityStrengthController = inputFolder.add(params.brush, 'velocityStrength', 0.01, 10.0).name('Velocity Strength').step(0.01);
+    const densityStrengthController = inputFolder.add(params.brush, 'densityStrength', 0.01, 10.0).name('Density Strength').step(0.01);
+    const temperatureStrengthController = inputFolder.add(params.brush, 'temperatureStrength', 0.01, 20.0).name('Temperature Strength').step(0.01);
     const falloffController = inputFolder.add(params.brush, 'falloff', 0, 1).name('Edge Falloff').step(0.01);
     const eraseController = inputFolder.add(params.brush, 'erase').name('Eraser');
     const vortexController = inputFolder.add(params.brush, 'vortexDirection', { 'Counter-Clockwise': 1, 'Clockwise': -1 }).name('Vortex Direction');
@@ -249,10 +278,21 @@ createFluidEngine().then(Module => {
 
         const isObstacle = type === 'obstacle';
         const isVortex = type === 'vortex';
+        const isVelocity = type === 'velocity' || type === 'combined' || type === 'vortex';
+        const isDensity = type === 'density' || type === 'combined';
+        const isTemperature = type === 'temperature' || type === 'combined';
 
-        strengthController.show(!isObstacle);
+        velocityStrengthController.show(isVelocity);
+        densityStrengthController.show(isDensity);
+        temperatureStrengthController.show(isTemperature);
         falloffController.show(!isObstacle);
         vortexController.show(isVortex);
+
+        if(type === 'vortex'){
+            velocityStrengthController.name('Vortex Strength');
+        } else {
+            velocityStrengthController.name('Velocity Strength');
+        }
 
         if (isObstacle) {
             eraseController.name('Remove Obstacle');
@@ -272,17 +312,18 @@ createFluidEngine().then(Module => {
         canvas.height = window.innerHeight;
 
         const aspect = canvas.width / canvas.height;
-        const baseRes = parseInt(params.resolutionScale);
+        const baseRes = parseInt(params.simulation.resolutionScale);
         
         simHeight = baseRes;
         simWidth = Math.round(baseRes * aspect);
 
         engine = new Module.FluidEngine(simWidth, simHeight);
-        engine.setViscosity(params.viscosity);
-        engine.setDecay(params.decay);
-        engine.setDt(params.dt);
-        engine.setBoundaryType(parseInt(params.boundary));
-        engine.setThermalDiffusivity(params.thermalDiffusivity);
+        engine.setViscosity(params.physics.viscosity);
+        engine.setDecay(params.physics.decay);
+        engine.setDt(params.simulation.dt);
+        engine.setBoundaryType(parseInt(params.physics.boundary));
+        engine.setThermalDiffusivity(params.physics.thermalDiffusivity);
+        engine.setMaxVelocity(params.physics.maxVelocity);
         
         updateGravity();
         updateBuoyancy();
@@ -290,7 +331,7 @@ createFluidEngine().then(Module => {
         
         renderer = new Renderer(canvas, simWidth, simHeight);
         
-        particles = new ParticleSystem(params.particleCount, canvas.width, canvas.height);
+        particles = new ParticleSystem(params.particles.count, canvas.width, canvas.height);
         const barrierArray = engine.getBarrierView();
         particles.reset(barrierArray, simWidth, simHeight);
 
@@ -326,7 +367,6 @@ createFluidEngine().then(Module => {
             if (brush.erase) {
                 engine.clearRegion(simX, simY, Math.round(radius));
             } else {
-                const strength = brush.strength;
                 const intRadius = Math.round(radius);
 
                 for(let ry = -intRadius; ry <= intRadius; ry++) {
@@ -344,26 +384,27 @@ createFluidEngine().then(Module => {
                             const smoothT = t * t * (3.0 - 2.0 * t);
                             falloff = (1.0 - brush.falloff) + brush.falloff * smoothT;
                         }
-                        
-                        const currentStrength = strength * falloff;
 
                         if (brush.type === 'vortex') {
-                            const vortexStrength = currentStrength * 0.1;
+                            const vortexStrength = params.brush.velocityStrength * falloff * 0.1;
                             engine.addForce(cx, cy, -ry * vortexStrength * brush.vortexDirection, rx * vortexStrength * brush.vortexDirection);
                         }
 
                         if (brush.type === 'velocity' || brush.type === 'combined') {
                             if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
-                                engine.addForce(cx, cy, dx * 0.5 * currentStrength, dy * 0.5 * currentStrength);
+                                const strength = params.brush.velocityStrength * falloff;
+                                engine.addForce(cx, cy, dx * 0.5 * strength, dy * 0.5 * strength);
                             }
                         } 
                         
                         if (brush.type === 'density' || brush.type === 'combined') {
-                            engine.addDensity(cx, cy, 0.5 * currentStrength);
+                            const strength = params.brush.densityStrength * falloff;
+                            engine.addDensity(cx, cy, 0.5 * strength);
                         }
 
                         if (brush.type === 'temperature' || brush.type === 'combined') {
-                            engine.addTemperature(cx, cy, 5.0 * currentStrength);
+                            const strength = params.brush.temperatureStrength * falloff;
+                            engine.addTemperature(cx, cy, 1.0 * strength);
                         }
                     }
                 }
@@ -420,8 +461,8 @@ createFluidEngine().then(Module => {
     window.addEventListener('touchend', () => mouse.isDragging = false);
 
     function loop() {
-        if(!params.paused && params.iterations > 0) {
-            engine.step(params.iterations);
+        if(!params.simulation.paused && params.simulation.iterations > 0) {
+            engine.step(params.simulation.iterations);
         }
 
         const uxArray = engine.getVelocityXView();
@@ -431,14 +472,14 @@ createFluidEngine().then(Module => {
         const dyeArray = engine.getDyeView();
         const tempArray = engine.getTemperatureView();
 
-        if (params.showParticles) {
-            particles.update(uxArray, uyArray, barrierArray, simWidth, simHeight, params.dt);
+        if (params.particles.show) {
+            particles.update(uxArray, uyArray, barrierArray, simWidth, simHeight, params.simulation.dt);
         }
 
-        renderer.draw(uxArray, uyArray, rhoArray, barrierArray, dyeArray, tempArray, params);
+        renderer.draw(uxArray, uyArray, rhoArray, barrierArray, dyeArray, tempArray, params.visualization);
 
-        if (params.showParticles) {
-            renderer.drawParticles(particles.positions, particles.count);
+        if (params.particles.show) {
+            renderer.drawParticles(particles.positions, particles.count, params);
         }
 
         if (mouse.isOver && !mouse.isDragging) {

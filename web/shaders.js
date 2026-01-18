@@ -12,6 +12,7 @@ uniform sampler2D u_velocity_x;
 uniform sampler2D u_velocity_y;
 uniform sampler2D u_density;
 uniform sampler2D u_obstacles;
+uniform sampler2D u_dye;
 
 uniform int u_mode;
 uniform float u_contrast;
@@ -113,7 +114,7 @@ void main() {
         color = getPalette(val, u_color_scheme);
     } 
     else if (u_mode == 2) { 
-        val = (rho - 1.0) * u_contrast;
+        val = texture(u_dye, v_uv).r * u_contrast;
         color = getPalette(val, u_color_scheme);
     }
 

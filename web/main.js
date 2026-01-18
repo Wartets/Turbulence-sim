@@ -371,12 +371,13 @@ createFluidEngine().then(Module => {
         const uyArray = engine.getVelocityYView();
         const rhoArray = engine.getDensityView();
         const barrierArray = engine.getBarrierView();
+        const dyeArray = engine.getDyeView();
 
         if (params.showParticles) {
             particles.update(uxArray, uyArray, barrierArray, simWidth, simHeight, params.dt);
         }
 
-        renderer.draw(uxArray, uyArray, rhoArray, barrierArray, params);
+        renderer.draw(uxArray, uyArray, rhoArray, barrierArray, dyeArray, params);
 
         if (params.showParticles) {
             renderer.drawParticles(particles.positions, particles.count);

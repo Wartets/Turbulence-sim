@@ -18,6 +18,7 @@ public:
     emscripten::val getVelocityXView();
     emscripten::val getVelocityYView();
     emscripten::val getBarrierView();
+    emscripten::val getDyeView();
 
     void reset();
     void addDensity(int x, int y, float amount);
@@ -38,9 +39,12 @@ private:
     std::vector<float> rho;   
     std::vector<float> ux;    
     std::vector<float> uy;
-    std::vector<unsigned char> barriers;    
+    std::vector<unsigned char> barriers;
+    std::vector<float> dye;
+    std::vector<float> dye_new;
 
     void equilibrium(float r, float u, float v, float* feq);
     void collideAndStream();
+    void advectDye();
     void limitVelocity(float &u, float &v);
 };

@@ -19,6 +19,8 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     ux.resize(size, 0.0f);
     uy.resize(size, 0.0f);
     barriers.resize(size, 0);
+    dye.resize(size, 0.0f);
+    dye_new.resize(size, 0.0f);
 
     for (int i = 0; i < size; ++i) {
         float feq[9];
@@ -90,11 +92,7 @@ void FluidEngine::addDensity(int x, int y, float amount) {
     
     if (barriers[idx]) return;
 
-    rho[idx] += amount;
-    
-    float feq[9];
-    equilibrium(rho[idx], ux[idx], uy[idx], feq);
-    for(int k=0; k<9; k++) f[idx*9 + k] = feq[k];
+    dye[idx] += amount;
 }
 
 void FluidEngine::addObstacle(int x, int y, int radius, bool remove) {
@@ -111,6 +109,7 @@ void FluidEngine::addObstacle(int x, int y, int radius, bool remove) {
                         ux[idx] = 0.0f;
                         uy[idx] = 0.0f;
                         rho[idx] = 1.0f;
+                        dye[idx] = 0.0f;
                         float feq[9];
                         equilibrium(1.0f, 0.0f, 0.0f, feq);
                         for(int k=0; k<9; ++k) f[idx * 9 + k] = feq[k];
@@ -127,6 +126,7 @@ void FluidEngine::reset() {
     std::fill(ux.begin(), ux.end(), 0.0f);
     std::fill(uy.begin(), uy.end(), 0.0f);
     std::fill(barriers.begin(), barriers.end(), 0);
+    std::fill(dye.begin(), dye.end(), 0.0f);
 
     float feq[9];
     equilibrium(1.0f, 0.0f, 0.0f, feq);
@@ -150,6 +150,7 @@ void FluidEngine::clearRegion(int x, int y, int radius) {
                     rho[idx] = 1.0f;
                     ux[idx] = 0.0f;
                     uy[idx] = 0.0f;
+                    dye[idx] = 0.0f;
 
                     float feq[9];
                     equilibrium(1.0f, 0.0f, 0.0f, feq);
@@ -163,6 +164,7 @@ void FluidEngine::clearRegion(int x, int y, int radius) {
 void FluidEngine::step(int iterations) {
     for(int i=0; i<iterations; ++i) {
         collideAndStream();
+        advectDye();
     }
 }
 
@@ -200,7 +202,7 @@ void FluidEngine::collideAndStream() {
         u_val += gravityX * dt;
         v_val += gravityY * dt;
 
-        rho[i] = r * (1.0f - decay);
+        rho[i] = r;
         limitVelocity(u_val, v_val);
         ux[i] = u_val;
         uy[i] = v_val;
@@ -285,6 +287,53 @@ void FluidEngine::collideAndStream() {
     }
 }
 
+void FluidEngine::advectDye() {
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            int idx = y * w + x;
+            if (barriers[idx]) {
+                dye_new[idx] = 0.0f;
+                continue;
+            }
+
+            float x_prev = (float)x - ux[idx] * dt;
+            float y_prev = (float)y - uy[idx] * dt;
+
+            if (x_prev < 0.5f) x_prev = 0.5f;
+            if (x_prev > w - 1.5f) x_prev = w - 1.5f;
+            if (y_prev < 0.5f) y_prev = 0.5f;
+            if (y_prev > h - 1.5f) y_prev = h - 1.5f;
+
+            int ix = static_cast<int>(x_prev);
+            int iy = static_cast<int>(y_prev);
+            float fx = x_prev - ix;
+            float fy = y_prev - iy;
+
+            int idx_tl = iy * w + ix;
+            int idx_tr = idx_tl + 1;
+            int idx_bl = (iy + 1) * w + ix;
+            int idx_br = idx_bl + 1;
+
+            float d_tl = barriers[idx_tl] ? 0.0f : dye[idx_tl];
+            float d_tr = barriers[idx_tr] ? 0.0f : dye[idx_tr];
+            float d_bl = barriers[idx_bl] ? 0.0f : dye[idx_bl];
+            float d_br = barriers[idx_br] ? 0.0f : dye[idx_br];
+            
+            float interpolated_dye = (1.0f - fx) * (1.0f - fy) * d_tl +
+                                     fx * (1.0f - fy) * d_tr +
+                                     (1.0f - fx) * fy * d_bl +
+                                     fx * fy * d_br;
+            
+            dye_new[idx] = interpolated_dye * (1.0f - decay);
+        }
+    }
+    dye.swap(dye_new);
+}
+
+val FluidEngine::getDyeView() {
+    return val(typed_memory_view(w * h, dye.data()));
+}
+
 val FluidEngine::getDensityView() {
     return val(typed_memory_view(w * h, rho.data()));
 }
@@ -318,5 +367,6 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("getDensityView", &FluidEngine::getDensityView)
         .function("getVelocityXView", &FluidEngine::getVelocityXView)
         .function("getVelocityYView", &FluidEngine::getVelocityYView)
-        .function("getBarrierView", &FluidEngine::getBarrierView);
+        .function("getBarrierView", &FluidEngine::getBarrierView)
+        .function("getDyeView", &FluidEngine::getDyeView);
 }

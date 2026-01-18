@@ -124,10 +124,14 @@ createFluidEngine().then(Module => {
         showParticles: false,
         particleCount: 20000,
 
-        brushSize: 5,
-        brushStrength: 0.8,
-        brushType: 'combined', 
-        eraseMode: false,
+        brush: {
+            type: 'combined',
+            size: 5,
+            strength: 0.8,
+            falloff: 0.5,
+            vortexDirection: 1,
+            erase: false
+        },
 
         reset: () => { 
             if(engine) engine.reset(); 
@@ -181,10 +185,25 @@ createFluidEngine().then(Module => {
     });
 
     const inputFolder = gui.addFolder('Interaction');
-    inputFolder.add(params, 'brushType', ['combined', 'velocity', 'density', 'vortex', 'obstacle']).name('Brush Mode');
-    inputFolder.add(params, 'brushSize', 1, 100).name('Radius');
-    inputFolder.add(params, 'brushStrength', 0.01, 10.0).name('Strength');
-    inputFolder.add(params, 'eraseMode').name('Eraser');
+    const brushTypeController = inputFolder.add(params.brush, 'type', ['combined', 'velocity', 'density', 'vortex', 'obstacle']).name('Brush Mode');
+    inputFolder.add(params.brush, 'size', 1, 100).name('Radius');
+    const strengthController = inputFolder.add(params.brush, 'strength', 0.01, 10.0).name('Strength');
+    const falloffController = inputFolder.add(params.brush, 'falloff', 0, 1).name('Edge Falloff');
+    const eraseController = inputFolder.add(params.brush, 'erase').name('Eraser');
+    const vortexController = inputFolder.add(params.brush, 'vortexDirection', { 'Counter-Clockwise': 1, 'Clockwise': -1 }).name('Vortex Direction');
+
+    const updateBrushUI = () => {
+        const type = params.brush.type;
+        const isObstacle = type === 'obstacle';
+        const isVortex = type === 'vortex';
+        
+        strengthController.domElement.parentElement.style.display = isObstacle ? 'none' : '';
+        falloffController.domElement.parentElement.style.display = isObstacle ? 'none' : '';
+        vortexController.domElement.parentElement.style.display = isVortex ? '' : 'none';
+
+        eraseController.name(isObstacle ? 'Remove Obstacle' : 'Eraser');
+    };
+    brushTypeController.onChange(updateBrushUI);
 
     let simWidth, simHeight;
 
@@ -214,89 +233,126 @@ createFluidEngine().then(Module => {
         const barrierArray = engine.getBarrierView();
         particles.reset(barrierArray, simWidth, simHeight);
 
+        updateBrushUI();
         loop();
     }
 
-    let isDragging = false;
-    let lastX = 0, lastY = 0;
+    let mouse = {
+        x: 0, y: 0,
+        lastClientX: 0, lastClientY: 0,
+        isDragging: false,
+        isOver: false
+    };
 
-    const handleInput = (x, y) => {
+    const handleInput = (clientX, clientY) => {
         const rect = canvas.getBoundingClientRect();
         
-        const mx = x - rect.left;
-        const my = y - rect.top;
+        const mx = clientX - rect.left;
+        const my = clientY - rect.top;
 
         const simX = Math.floor((mx / canvas.width) * simWidth);
         const simY = Math.floor(((canvas.height - my) / canvas.height) * simHeight);
         
-        const dx = (x - lastX);
-        const dy = -(y - lastY); 
+        const dx = (clientX - mouse.lastClientX);
+        const dy = -(clientY - mouse.lastClientY); 
 
-        const radius = params.brushSize;
+        const brush = params.brush;
+        const radius = brush.size;
 
-        if (params.brushType === 'obstacle') {
-             engine.addObstacle(simX, simY, radius, params.eraseMode);
+        if (brush.type === 'obstacle') {
+             engine.addObstacle(simX, simY, Math.round(radius), brush.erase);
         } else {
-            if (params.eraseMode) {
-                engine.clearRegion(simX, simY, radius);
+            if (brush.erase) {
+                engine.clearRegion(simX, simY, Math.round(radius));
             } else {
-                for(let ry = -radius; ry <= radius; ry++) {
-                    for(let rx = -radius; rx <= radius; rx++) {
-                        if(rx*rx + ry*ry > radius*radius) continue;
+                const strength = brush.strength;
+                const intRadius = Math.round(radius);
+
+                for(let ry = -intRadius; ry <= intRadius; ry++) {
+                    for(let rx = -intRadius; rx <= intRadius; rx++) {
+                        const distSq = rx*rx + ry*ry;
+                        if(distSq > radius*radius) continue;
                         
                         const cx = Math.max(0, Math.min(simWidth - 1, simX + rx));
                         const cy = Math.max(0, Math.min(simHeight - 1, simY + ry));
 
-                        const strength = params.brushStrength;
+                        let falloff = 1.0;
+                        if (radius > 0.0) {
+                            const dist = Math.sqrt(distSq);
+                            const t = 1.0 - Math.min(dist / radius, 1.0);
+                            const smoothT = t * t * (3.0 - 2.0 * t);
+                            falloff = (1.0 - brush.falloff) + brush.falloff * smoothT;
+                        }
+                        
+                        const currentStrength = strength * falloff;
 
-                        if (params.brushType === 'vortex') {
-                            const vortexStrength = strength * 0.1;
-                            engine.addForce(cx, cy, -ry * vortexStrength, rx * vortexStrength);
+                        if (brush.type === 'vortex') {
+                            const vortexStrength = currentStrength * 0.1;
+                            engine.addForce(cx, cy, -ry * vortexStrength * brush.vortexDirection, rx * vortexStrength * brush.vortexDirection);
                         }
 
-                        if (params.brushType === 'velocity' || params.brushType === 'combined') {
+                        if (brush.type === 'velocity' || brush.type === 'combined') {
                             if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
-                                engine.addForce(cx, cy, dx * 0.5 * strength, dy * 0.5 * strength);
+                                engine.addForce(cx, cy, dx * 0.5 * currentStrength, dy * 0.5 * currentStrength);
                             }
                         } 
                         
-                        if (params.brushType === 'density' || params.brushType === 'combined') {
-                            engine.addDensity(cx, cy, 0.5 * strength);
+                        if (brush.type === 'density' || brush.type === 'combined') {
+                            engine.addDensity(cx, cy, 0.5 * currentStrength);
                         }
                     }
                 }
             }
         }
         
-        lastX = x;
-        lastY = y;
+        mouse.lastClientX = clientX;
+        mouse.lastClientY = clientY;
     };
 
     window.addEventListener('resize', () => {
         setTimeout(initSimulation, 100);
     });
 
-    canvas.addEventListener('mousedown', e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; handleInput(e.clientX, e.clientY); });
-    window.addEventListener('mouseup', () => isDragging = false);
-    canvas.addEventListener('mousemove', e => { if (isDragging) handleInput(e.clientX, e.clientY); });
+    canvas.addEventListener('mousedown', e => { 
+        mouse.isDragging = true; 
+        mouse.lastClientX = e.clientX; 
+        mouse.lastClientY = e.clientY; 
+        handleInput(e.clientX, e.clientY); 
+    });
+
+    window.addEventListener('mouseup', () => mouse.isDragging = false);
+
+    canvas.addEventListener('mousemove', e => { 
+        const rect = canvas.getBoundingClientRect();
+        mouse.x = e.clientX - rect.left;
+        mouse.y = e.clientY - rect.top;
+        if (mouse.isDragging) handleInput(e.clientX, e.clientY); 
+    });
+
+    canvas.addEventListener('mouseenter', () => mouse.isOver = true);
+    canvas.addEventListener('mouseleave', () => mouse.isOver = false);
     
     canvas.addEventListener('touchstart', e => { 
-        isDragging = true; 
+        e.preventDefault();
+        mouse.isDragging = true; 
         const t = e.touches[0]; 
-        lastX = t.clientX; 
-        lastY = t.clientY; 
+        mouse.lastClientX = t.clientX; 
+        mouse.lastClientY = t.clientY; 
         handleInput(t.clientX, t.clientY);
     }, {passive: false});
     
     canvas.addEventListener('touchmove', e => { 
         e.preventDefault();
-        if (isDragging) {
+        if (mouse.isDragging) {
             const t = e.touches[0];
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = t.clientX - rect.left;
+            mouse.y = t.clientY - rect.top;
             handleInput(t.clientX, t.clientY); 
         }
     }, {passive: false});
 
-    window.addEventListener('touchend', () => isDragging = false);
+    window.addEventListener('touchend', () => mouse.isDragging = false);
 
     function loop() {
         if(!params.paused && params.iterations > 0) {
@@ -316,6 +372,13 @@ createFluidEngine().then(Module => {
 
         if (params.showParticles) {
             renderer.drawParticles(particles.positions, particles.count);
+        }
+
+        if (mouse.isOver && !mouse.isDragging) {
+            const brush = params.brush;
+            const canvasRadius = (brush.size / simWidth) * canvas.width;
+            const color = brush.erase ? [1.0, 0.2, 0.2, 0.7] : [1.0, 1.0, 1.0, 0.7];
+            renderer.drawBrush(mouse.x, mouse.y, canvasRadius, color);
         }
 
         requestId = requestAnimationFrame(loop);

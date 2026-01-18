@@ -15,6 +15,7 @@ class Renderer {
 
         this.program = this.createProgram(VS_SOURCE, FS_SOURCE);
         this.particleProgram = this.createProgram(PARTICLE_VS, PARTICLE_FS);
+        this.brushProgram = this.createProgram(BRUSH_VS, BRUSH_FS);
         
         this.texUx = this.createTexture(this.gl.R32F, this.gl.FLOAT);
         this.texUy = this.createTexture(this.gl.R32F, this.gl.FLOAT);
@@ -28,6 +29,16 @@ class Renderer {
         ]), this.gl.STATIC_DRAW);
 
         this.particleBuffer = this.gl.createBuffer();
+        
+        this.brushBuffer = this.gl.createBuffer();
+        this.brushVertexCount = 48;
+        const brushVerts = [];
+        for (let i = 0; i < this.brushVertexCount; i++) {
+            const angle = (i / this.brushVertexCount) * Math.PI * 2;
+            brushVerts.push(Math.cos(angle), Math.sin(angle));
+        }
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
+        this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(brushVerts), this.gl.STATIC_DRAW);
 
         this.gl.useProgram(this.program);
         this.uniforms = {
@@ -40,6 +51,13 @@ class Renderer {
             brightness: this.gl.getUniformLocation(this.program, "u_brightness"),
             colorScheme: this.gl.getUniformLocation(this.program, "u_color_scheme"),
             obstacleColor: this.gl.getUniformLocation(this.program, "u_obstacle_color")
+        };
+
+        this.brushUniforms = {
+            resolution: this.gl.getUniformLocation(this.brushProgram, "u_resolution"),
+            center: this.gl.getUniformLocation(this.brushProgram, "u_center"),
+            radius: this.gl.getUniformLocation(this.brushProgram, "u_radius"),
+            color: this.gl.getUniformLocation(this.brushProgram, "u_color")
         };
     }
 
@@ -133,5 +151,24 @@ class Renderer {
         this.gl.drawArrays(this.gl.POINTS, 0, count);
         
         this.gl.disable(this.gl.BLEND);
+    }
+
+    drawBrush(x, y, radius, color) {
+        this.gl.enable(this.gl.BLEND);
+        this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+        
+        this.gl.useProgram(this.brushProgram);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
+
+        const posLoc = this.gl.getAttribLocation(this.brushProgram, "a_position");
+        this.gl.enableVertexAttribArray(posLoc);
+        this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+
+        this.gl.uniform2f(this.brushUniforms.resolution, this.gl.canvas.width, this.gl.canvas.height);
+        this.gl.uniform2f(this.brushUniforms.center, x, y);
+        this.gl.uniform1f(this.brushUniforms.radius, radius);
+        this.gl.uniform4fv(this.brushUniforms.color, color);
+
+        this.gl.drawArrays(this.gl.LINE_LOOP, 0, this.brushVertexCount);
     }
 }

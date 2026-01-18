@@ -78,18 +78,14 @@ vec3 getPalette(float val, int scheme) {
         case 2: return plasma(val);
         case 3: return viridis(val);
         case 4: return turbo(val);
-        case 5: return vec3(val); // Grayscale
-        case 6: return vec3(0.1, 0.3, 0.6) + vec3(0.8, 0.7, 0.4) * val; // Ice/Ocean
+        case 5: return vec3(val);
+        case 6: return vec3(0.1, 0.3, 0.6) + vec3(0.8, 0.7, 0.4) * val;
         default: return inferno(val);
     }
 }
 
 void main() {
-    float obs = texture(u_obstacles, v_uv).r;
-    if (obs > 0.1) {
-        outColor = vec4(u_obstacle_color, 1.0);
-        return;
-    }
+    float is_obstacle = step(0.5, texture(u_obstacles, v_uv).r);
 
     float ux = texture(u_velocity_x, v_uv).r;
     float uy = texture(u_velocity_y, v_uv).r;
@@ -117,11 +113,14 @@ void main() {
         color = getPalette(val, u_color_scheme);
     }
 
-    vec3 final_color = color * u_brightness;
+    vec3 fluid_color = color * u_brightness;
     vec3 base_color = vec3(0.0, 0.01, 0.04);
-    float intensity = clamp(length(final_color) * 5.0, 0.0, 1.0);
-    outColor = vec4(mix(base_color, final_color, intensity), 1.0);
-}`;
+    float intensity = clamp(length(fluid_color) * 5.0, 0.0, 1.0);
+    vec3 final_fluid_color = mix(base_color, fluid_color, intensity);
+
+    outColor = vec4(mix(final_fluid_color, u_obstacle_color, is_obstacle), 1.0);
+}
+`;
 
 const PARTICLE_VS = `#version 300 es
 in vec2 a_position;
@@ -137,4 +136,24 @@ precision mediump float;
 out vec4 outColor;
 void main() {
     outColor = vec4(1.0, 1.0, 1.0, 0.5);
+}`;
+
+const BRUSH_VS = `#version 300 es
+in vec2 a_position;
+uniform vec2 u_resolution;
+uniform vec2 u_center;
+uniform float u_radius;
+
+void main() {
+    vec2 pos = u_center + a_position * u_radius;
+    vec2 clipSpace = (pos / u_resolution) * 2.0 - 1.0;
+    gl_Position = vec4(clipSpace * vec2(1.0, -1.0), 0.0, 1.0);
+}`;
+
+const BRUSH_FS = `#version 300 es
+precision mediump float;
+uniform vec4 u_color;
+out vec4 outColor;
+void main() {
+    outColor = u_color;
 }`;

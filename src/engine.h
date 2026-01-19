@@ -11,6 +11,7 @@ public:
     void addForce(int x, int y, float fx, float fy);
     void setViscosity(float viscosity);
     void setDecay(float decay);
+    void setVelocityDissipation(float dissipation);
     
     void setBoundaryType(int type);
     void setDt(float dt);
@@ -34,11 +35,13 @@ public:
     void addTemperature(int x, int y, float amount);
     void clearRegion(int x, int y, int radius);
     void addObstacle(int x, int y, int radius, bool remove);
+    void applyDimensionalBrush(int x, int y, int radius, int mode, float strength, float falloff);
 
 private:
     int w, h;
     float omega; 
     float decay;
+    float velocityDissipation;
     float dt;
     int boundaryType;
     float gravityX;

@@ -19,6 +19,7 @@ createFluidEngine().then(Module => {
         physics: {
             viscosity: 0.8,
             decay: 0.001,
+            velocityDissipation: 0.0,
             boundary: 1,
             gravityX: 0,
             gravityY: 0,
@@ -63,6 +64,9 @@ createFluidEngine().then(Module => {
             velocityStrength: 2,
             densityStrength: 0.8,
             temperatureStrength: 4.0,
+            noiseStrength: 1.0,
+            dragStrength: 0.1,
+            expansionStrength: 1.0,
         },
 
         reset: () => { 
@@ -108,7 +112,8 @@ createFluidEngine().then(Module => {
     physicsFolder.add(params, 'reset').name('Reset Fluid');
 
     physicsFolder.add(params.physics, 'viscosity', 0.001, 10).name('Viscosity').step(0.001).onChange(v => engine && engine.setViscosity(v));
-    physicsFolder.add(params.physics, 'decay', 0.0, 0.05).name('Dissipation').step(0.0001).onChange(d => engine && engine.setDecay(d));
+    physicsFolder.add(params.physics, 'decay', 0.0, 0.05).name('Dye Dissipation').step(0.0001).onChange(d => engine && engine.setDecay(d));
+    physicsFolder.add(params.physics, 'velocityDissipation', 0.0, 0.1).name('Velocity Drag').step(0.0001).onChange(d => engine && engine.setVelocityDissipation(d));
     physicsFolder.add(params.physics, 'boundary', { 
         'Periodic': 0, 
         'Box': 1, 
@@ -161,7 +166,7 @@ createFluidEngine().then(Module => {
     
     const particleFolder = viewFolder.addFolder('Particles');
     particleFolder.add(params.particles, 'show').name('Show Particles');
-    particleFolder.add(params.particles, 'count', 0, 10000000, 10000).name('Particle Count').onChange(count => {
+    particleFolder.add(params.particles, 'count', 0, 1000000, 10000).name('Particle Count').onChange(count => {
         if(renderer) renderer.initParticles(count);
     });
     particleFolder.add(params.particles, 'size', 0.01, 1.0).name('Size');
@@ -169,11 +174,15 @@ createFluidEngine().then(Module => {
     particleFolder.addColor(params.particles, 'color').name('Color');
 
     const inputFolder = gui.addFolder('Interaction');
-    const brushTypeController = inputFolder.add(params.brush, 'type', ['combined', 'velocity', 'density', 'temperature', 'vortex', 'obstacle']).name('Brush Mode');
+    const brushTypeController = inputFolder.add(params.brush, 'type', ['combined', 'velocity', 'density', 'temperature', 'vortex', 'expansion', 'noise', 'drag', 'obstacle']).name('Brush Mode');
     inputFolder.add(params.brush, 'size', 1, 100).name('Radius');
     const velocityStrengthController = inputFolder.add(params.brush, 'velocityStrength', 0.01, 10.0).name('Velocity Strength').step(0.01);
     const densityStrengthController = inputFolder.add(params.brush, 'densityStrength', 0.01, 10.0).name('Density Strength').step(0.01);
     const temperatureStrengthController = inputFolder.add(params.brush, 'temperatureStrength', 0.01, 20.0).name('Temperature Strength').step(0.01);
+    const noiseStrengthController = inputFolder.add(params.brush, 'noiseStrength', 0.01, 10.0).name('Noise Strength').step(0.01);
+    const expansionStrengthController = inputFolder.add(params.brush, 'expansionStrength', -5.0, 5.0).name('Expansion Strength').step(0.01);
+    const dragStrengthController = inputFolder.add(params.brush, 'dragStrength', 0.0, 1.0).name('Drag Factor').step(0.01);
+    
     const falloffController = inputFolder.add(params.brush, 'falloff', 0, 1).name('Edge Falloff').step(0.01);
     const eraseController = inputFolder.add(params.brush, 'erase').name('Eraser');
     const vortexController = inputFolder.add(params.brush, 'vortexDirection', { 'Counter-Clockwise': 1, 'Clockwise': -1 }).name('Vortex Direction');
@@ -183,21 +192,27 @@ createFluidEngine().then(Module => {
 
         const isObstacle = type === 'obstacle';
         const isVortex = type === 'vortex';
-        const isVelocity = type === 'velocity' || type === 'combined' || type === 'vortex';
+        const isExpansion = type === 'expansion';
+        const isNoise = type === 'noise';
+        const isDrag = type === 'drag';
+        
+        const isVelocity = type === 'velocity' || type === 'combined';
         const isDensity = type === 'density' || type === 'combined';
         const isTemperature = type === 'temperature' || type === 'combined';
 
-        velocityStrengthController.show(isVelocity);
+        velocityStrengthController.show(isVelocity || isVortex);
+        if(isVortex) velocityStrengthController.name('Vortex Strength');
+        else velocityStrengthController.name('Velocity Strength');
+
         densityStrengthController.show(isDensity);
         temperatureStrengthController.show(isTemperature);
+        
+        noiseStrengthController.show(isNoise);
+        expansionStrengthController.show(isExpansion);
+        dragStrengthController.show(isDrag);
+
         falloffController.show(!isObstacle);
         vortexController.show(isVortex);
-
-        if(type === 'vortex'){
-            velocityStrengthController.name('Vortex Strength');
-        } else {
-            velocityStrengthController.name('Velocity Strength');
-        }
 
         if (isObstacle) {
             eraseController.name('Remove Obstacle');
@@ -233,6 +248,7 @@ createFluidEngine().then(Module => {
 
         engine.setViscosity(params.physics.viscosity);
         engine.setDecay(params.physics.decay);
+        engine.setVelocityDissipation(params.physics.velocityDissipation);
         engine.setDt(params.simulation.dt);
         engine.setBoundaryType(parseInt(params.physics.boundary));
         engine.setThermalDiffusivity(params.physics.thermalDiffusivity);
@@ -284,44 +300,59 @@ createFluidEngine().then(Module => {
             if (brush.erase) {
                 engine.clearRegion(simX, simY, Math.round(radius));
             } else {
-                const intRadius = Math.round(radius);
+                
+                // Handle Dimensional Brushes (Vortex, Expansion, Noise, Drag)
+                // Mode mapping: 0=Vortex, 1=Divergence, 2=Noise, 3=Drag
+                if (brush.type === 'vortex') {
+                    const str = brush.velocityStrength * brush.vortexDirection;
+                    engine.applyDimensionalBrush(simX, simY, Math.round(radius), 0, str, brush.falloff);
+                } else if (brush.type === 'expansion') {
+                    engine.applyDimensionalBrush(simX, simY, Math.round(radius), 1, brush.expansionStrength, brush.falloff);
+                } else if (brush.type === 'noise') {
+                    engine.applyDimensionalBrush(simX, simY, Math.round(radius), 2, brush.noiseStrength, brush.falloff);
+                } else if (brush.type === 'drag') {
+                    engine.applyDimensionalBrush(simX, simY, Math.round(radius), 3, brush.dragStrength, brush.falloff);
+                }
 
-                for(let ry = -intRadius; ry <= intRadius; ry++) {
-                    for(let rx = -intRadius; rx <= intRadius; rx++) {
-                        const distSq = rx*rx + ry*ry;
-                        if(distSq > radius*radius) continue;
-                        
-                        const cx = Math.max(0, Math.min(simWidth - 1, simX + rx));
-                        const cy = Math.max(0, Math.min(simHeight - 1, simY + ry));
+                // Handle Painting Brushes (Velocity, Density, Temperature)
+                const paintVelocity = (brush.type === 'velocity' || brush.type === 'combined');
+                const paintDensity = (brush.type === 'density' || brush.type === 'combined');
+                const paintTemperature = (brush.type === 'temperature' || brush.type === 'combined');
 
-                        let falloff = 1.0;
-                        if (radius > 0.0) {
-                            const dist = Math.sqrt(distSq);
-                            const t = 1.0 - Math.min(dist / radius, 1.0);
-                            const smoothT = t * t * (3.0 - 2.0 * t);
-                            falloff = (1.0 - brush.falloff) + brush.falloff * smoothT;
-                        }
+                if (paintVelocity || paintDensity || paintTemperature) {
+                    const intRadius = Math.round(radius);
+                    for(let ry = -intRadius; ry <= intRadius; ry++) {
+                        for(let rx = -intRadius; rx <= intRadius; rx++) {
+                            const distSq = rx*rx + ry*ry;
+                            if(distSq > radius*radius) continue;
+                            
+                            const cx = Math.max(0, Math.min(simWidth - 1, simX + rx));
+                            const cy = Math.max(0, Math.min(simHeight - 1, simY + ry));
 
-                        if (brush.type === 'vortex') {
-                            const vortexStrength = params.brush.velocityStrength * falloff * 0.1;
-                            engine.addForce(cx, cy, -ry * vortexStrength * brush.vortexDirection, rx * vortexStrength * brush.vortexDirection);
-                        }
-
-                        if (brush.type === 'velocity' || brush.type === 'combined') {
-                            if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
-                                const strength = params.brush.velocityStrength * falloff;
-                                engine.addForce(cx, cy, dx * 0.5 * strength, dy * 0.5 * strength);
+                            let falloff = 1.0;
+                            if (radius > 0.0) {
+                                const dist = Math.sqrt(distSq);
+                                const t = 1.0 - Math.min(dist / radius, 1.0);
+                                const smoothT = t * t * (3.0 - 2.0 * t);
+                                falloff = (1.0 - brush.falloff) + brush.falloff * smoothT;
                             }
-                        } 
-                        
-                        if (brush.type === 'density' || brush.type === 'combined') {
-                            const strength = params.brush.densityStrength * falloff;
-                            engine.addDensity(cx, cy, 0.5 * strength);
-                        }
 
-                        if (brush.type === 'temperature' || brush.type === 'combined') {
-                            const strength = params.brush.temperatureStrength * falloff;
-                            engine.addTemperature(cx, cy, 1.0 * strength);
+                            if (paintVelocity) {
+                                if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
+                                    const strength = params.brush.velocityStrength * falloff;
+                                    engine.addForce(cx, cy, dx * 0.5 * strength, dy * 0.5 * strength);
+                                }
+                            } 
+                            
+                            if (paintDensity) {
+                                const strength = params.brush.densityStrength * falloff;
+                                engine.addDensity(cx, cy, 0.5 * strength);
+                            }
+
+                            if (paintTemperature) {
+                                const strength = params.brush.temperatureStrength * falloff;
+                                engine.addTemperature(cx, cy, 1.0 * strength);
+                            }
                         }
                     }
                 }

@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <cstdlib>
 
 using namespace emscripten;
 
@@ -12,7 +13,7 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1) {
     std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
     int size = w * h;
     f.resize(size * 9);
@@ -101,6 +102,63 @@ void FluidEngine::setThermalDiffusivity(float td) {
 
 void FluidEngine::setVorticityConfinement(float vc) {
     vorticityConfinement = vc;
+}
+
+void FluidEngine::setVelocityDissipation(float dissipation) {
+    velocityDissipation = dissipation;
+}
+
+void FluidEngine::applyDimensionalBrush(int x, int y, int radius, int mode, float strength, float falloffParam) {
+    int r2 = radius * radius;
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            int d2 = dx * dx + dy * dy;
+            if (d2 > r2) continue;
+
+            int nx = x + dx;
+            int ny = y + dy;
+
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+
+            int idx = ny * w + nx;
+            if (barriers[idx]) continue;
+
+            float dist = std::sqrt((float)d2);
+            float normDist = (radius > 0) ? dist / (float)radius : 0.0f;
+            float t = 1.0f - normDist;
+            if (t < 0.0f) t = 0.0f;
+            float smoothT = t * t * (3.0f - 2.0f * t);
+            float weight = (1.0f - falloffParam) + falloffParam * smoothT;
+
+            if (mode == 0) { // Vortex
+                float fx = -dy * strength * weight;
+                float fy = dx * strength * weight;
+                ux[idx] += fx * dt;
+                uy[idx] += fy * dt;
+            } else if (mode == 1) { // Divergence (Expansion/Contraction)
+                float fx = dx * strength * weight;
+                float fy = dy * strength * weight;
+                ux[idx] += fx * dt;
+                uy[idx] += fy * dt;
+            } else if (mode == 2) { // Noise
+                float randX = ((float)rand() / (float)RAND_MAX - 0.5f) * 2.0f;
+                float randY = ((float)rand() / (float)RAND_MAX - 0.5f) * 2.0f;
+                ux[idx] += randX * strength * weight * dt;
+                uy[idx] += randY * strength * weight * dt;
+            } else if (mode == 3) { // Drag (Dampen)
+                float dampen = 1.0f - (strength * weight * dt);
+                if (dampen < 0.0f) dampen = 0.0f;
+                ux[idx] *= dampen;
+                uy[idx] *= dampen;
+            }
+
+            limitVelocity(ux[idx], uy[idx]);
+            
+            float feq[9];
+            equilibrium(rho[idx], ux[idx], uy[idx], feq);
+            for(int k=0; k<9; k++) f[idx*9 + k] = feq[k];
+        }
+    }
 }
 
 void FluidEngine::addTemperature(int x, int y, float amount) {
@@ -300,6 +358,13 @@ void FluidEngine::collideAndStream() {
 
         float u_final = ux[i] + (gravityX + forceX[i]) * dt;
         float v_final = uy[i] + (gravityY + buoyancy * temperature[i] + forceY[i]) * dt;
+        
+        if (velocityDissipation > 0.0f) {
+            float damp = 1.0f - velocityDissipation;
+            if (damp < 0.0f) damp = 0.0f;
+            u_final *= damp;
+            v_final *= damp;
+        }
 
         limitVelocity(u_final, v_final);
         ux[i] = u_final;
@@ -509,6 +574,7 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("addTemperature", &FluidEngine::addTemperature)
         .function("setViscosity", &FluidEngine::setViscosity)
         .function("setDecay", &FluidEngine::setDecay)
+        .function("setVelocityDissipation", &FluidEngine::setVelocityDissipation)
         .function("setDt", &FluidEngine::setDt)
         .function("setGravity", &FluidEngine::setGravity)
         .function("setBoundaryType", &FluidEngine::setBoundaryType)
@@ -519,6 +585,7 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("reset", &FluidEngine::reset)
         .function("clearRegion", &FluidEngine::clearRegion)
         .function("addObstacle", &FluidEngine::addObstacle)
+        .function("applyDimensionalBrush", &FluidEngine::applyDimensionalBrush)
         .function("getDensityView", &FluidEngine::getDensityView)
         .function("getVelocityXView", &FluidEngine::getVelocityXView)
         .function("getVelocityYView", &FluidEngine::getVelocityYView)

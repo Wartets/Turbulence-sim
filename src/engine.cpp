@@ -3,6 +3,8 @@
 #include <cmath>
 #include <iostream>
 #include <cstdlib>
+#include <future>
+#include <memory>
 
 using namespace emscripten;
 
@@ -13,7 +15,7 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1), stop(false) {
     std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
     int size = w * h;
     f.resize(size * 9);
@@ -40,9 +42,61 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     }
 }
 
+FluidEngine::~FluidEngine() {
+    {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        stop = true;
+    }
+    condition.notify_all();
+    for (std::thread &worker : workers) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+}
+
+void FluidEngine::initThreadPool(int count) {
+    #ifdef __EMSCRIPTEN_PTHREADS__
+        for(int i = 0; i < count; ++i) {
+            workers.emplace_back([this] {
+                while(true) {
+                    std::function<void()> task;
+                    {
+                        std::unique_lock<std::mutex> lock(queue_mutex);
+                        condition.wait(lock, [this]{ return stop || !tasks.empty(); });
+                        if(stop && tasks.empty()) return;
+                        task = std::move(tasks.front());
+                        tasks.pop();
+                    }
+                    task();
+                }
+            });
+        }
+    #endif
+}
+
 void FluidEngine::setThreadCount(int count) {
     std::cout << "DEBUG: setThreadCount called with " << count << std::endl;
-    threadCount = std::max(1, count);
+    int newCount = std::max(1, count);
+    
+    if (newCount == threadCount && !workers.empty()) return;
+
+    {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        stop = true;
+    }
+    condition.notify_all();
+    for(std::thread &worker : workers) {
+        if(worker.joinable()) worker.join();
+    }
+    workers.clear();
+
+    threadCount = newCount;
+    stop = false;
+    
+    if (threadCount > 1) {
+        initThreadPool(threadCount);
+    }
 }
 
 void FluidEngine::parallel_for(int start, int end, std::function<void(int, int)> func) {
@@ -50,16 +104,31 @@ void FluidEngine::parallel_for(int start, int end, std::function<void(int, int)>
         func(start, end);
     } else {
         #ifdef __EMSCRIPTEN_PTHREADS__
-            std::vector<std::thread> threads;
+            std::vector<std::future<void>> futures;
             int total = end - start;
             int chunk = total / threadCount;
+            
             for (int i = 0; i < threadCount; ++i) {
                 int range_start = start + i * chunk;
                 int range_end = (i == threadCount - 1) ? end : range_start + chunk;
-                threads.emplace_back(func, range_start, range_end);
+                
+                auto task = std::make_shared<std::packaged_task<void()>>(
+                    [func, range_start, range_end](){
+                        func(range_start, range_end);
+                    }
+                );
+                
+                futures.emplace_back(task->get_future());
+                
+                {
+                    std::unique_lock<std::mutex> lock(queue_mutex);
+                    tasks.emplace([task](){ (*task)(); });
+                }
             }
-            for (auto& t : threads) {
-                t.join();
+            condition.notify_all();
+            
+            for(auto &f : futures) {
+                f.wait();
             }
         #else
             func(start, end);

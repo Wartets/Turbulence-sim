@@ -3,10 +3,16 @@
 #include <thread>
 #include <functional>
 #include <emscripten/bind.h>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <atomic>
+#include <future>
 
 class FluidEngine {
 public:
     FluidEngine(int width, int height);
+    ~FluidEngine();
     void step(int iterations);
     void addForce(int x, int y, float fx, float fy);
     void setViscosity(float viscosity);
@@ -66,6 +72,14 @@ private:
     std::vector<float> forceX;
     std::vector<float> forceY;
     std::vector<float> curl;
+
+    std::vector<std::thread> workers;
+    std::queue<std::function<void()>> tasks;
+    std::mutex queue_mutex;
+    std::condition_variable condition;
+    bool stop;
+
+    void initThreadPool(int count);
 
     void equilibrium(float r, float u, float v, float* feq);
     void collideAndStream();

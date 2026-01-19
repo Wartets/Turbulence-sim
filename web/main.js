@@ -10,7 +10,7 @@ createFluidEngine().then(Module => {
     const params = {
         simulation: {
             resolutionScale: 150,
-            iterations: 5,
+            iterations: 2,
             paused: false,
             dt: 1.5,
             threads: navigator.hardwareConcurrency || 4

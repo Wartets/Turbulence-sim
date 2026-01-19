@@ -9,7 +9,7 @@ createFluidEngine().then(Module => {
 
     const params = {
         simulation: {
-            resolutionScale: 150,
+            resolutionScale: 200,
             iterations: 2,
             paused: false,
             dt: 1.5,

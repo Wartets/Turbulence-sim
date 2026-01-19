@@ -18,8 +18,10 @@ const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f,
 FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1), stop(false) {
     std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
     int size = w * h;
-    f.resize(size * 9);
-    f_new.resize(size * 9);
+    for(int k = 0; k < 9; ++k) {
+        f[k].resize(size);
+        f_new[k].resize(size);
+    }
     rho.resize(size, 1.0f);
     ux.resize(size, 0.0f);
     uy.resize(size, 0.0f);
@@ -33,12 +35,10 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     forceY.resize(size, 0.0f);
     curl.resize(size, 0.0f);
 
-    for (int i = 0; i < size; ++i) {
-        float feq[9];
-        equilibrium(1.0f, 0.0f, 0.0f, feq);
-        for (int k = 0; k < 9; ++k) {
-            f[i * 9 + k] = feq[k];
-        }
+    float feq[9];
+    equilibrium(1.0f, 0.0f, 0.0f, feq);
+    for (int k = 0; k < 9; ++k) {
+        std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
 }
 
@@ -229,7 +229,7 @@ void FluidEngine::applyDimensionalBrush(int x, int y, int radius, int mode, floa
             
             float feq[9];
             equilibrium(rho[idx], ux[idx], uy[idx], feq);
-            for(int k=0; k<9; k++) f[idx*9 + k] = feq[k];
+            for(int k=0; k<9; k++) f[k][idx] = feq[k];
         }
     }
 }
@@ -269,7 +269,7 @@ void FluidEngine::addForce(int x, int y, float fx, float fy) {
 
     float feq[9];
     equilibrium(rho[idx], ux[idx], uy[idx], feq);
-    for(int k=0; k<9; k++) f[idx*9 + k] = feq[k];
+    for(int k=0; k<9; k++) f[k][idx] = feq[k];
 }
 
 void FluidEngine::addDensity(int x, int y, float amount) {
@@ -299,7 +299,7 @@ void FluidEngine::addObstacle(int x, int y, int radius, bool remove) {
                         temperature[idx] = 0.0f;
                         float feq[9];
                         equilibrium(1.0f, 0.0f, 0.0f, feq);
-                        for(int k=0; k<9; ++k) f[idx * 9 + k] = feq[k];
+                        for(int k=0; k<9; ++k) f[k][idx] = feq[k];
                     }
                 }
             }
@@ -319,10 +319,8 @@ void FluidEngine::reset() {
     float feq[9];
     equilibrium(1.0f, 0.0f, 0.0f, feq);
 
-    for (int i = 0; i < size; ++i) {
-        for (int k = 0; k < 9; ++k) {
-            f[i * 9 + k] = feq[k];
-        }
+    for (int k = 0; k < 9; ++k) {
+        std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
 }
 
@@ -343,7 +341,7 @@ void FluidEngine::clearRegion(int x, int y, int radius) {
 
                     float feq[9];
                     equilibrium(1.0f, 0.0f, 0.0f, feq);
-                    for (int k = 0; k < 9; ++k) f[idx * 9 + k] = feq[k];
+                    for (int k = 0; k < 9; ++k) f[k][idx] = feq[k];
                 }
             }
         }
@@ -375,7 +373,7 @@ void FluidEngine::collideAndStream() {
                 float v_val = 0.0f;
                 
                 for (int k = 0; k < 9; ++k) {
-                    float f_val = f[i * 9 + k];
+                    float f_val = f[k][i];
                     r += f_val;
                     u_val += f_val * cx[k];
                     v_val += f_val * cy[k];
@@ -437,7 +435,7 @@ void FluidEngine::collideAndStream() {
                     float feq[9];
                     equilibrium(1.0f, 0.0f, 0.0f, feq);
                     for(int k=0; k<9; ++k) {
-                        f_new[i*9 + k] = feq[k];
+                        f_new[k][i] = feq[k];
                     }
                     continue;
                 }
@@ -460,7 +458,7 @@ void FluidEngine::collideAndStream() {
                 equilibrium(rho[i], u_final, v_final, feq);
 
                 for (int k = 0; k < 9; ++k) {
-                    f_new[i*9 + k] = f[i*9 + k] * (1.0f - omega) + feq[k] * omega;
+                    f_new[k][i] = f[k][i] * (1.0f - omega) + feq[k] * omega;
                 }
             }
         }
@@ -526,12 +524,12 @@ void FluidEngine::collideAndStream() {
                     }
 
                     if (reflect_k != -1) {
-                        f[currentIdx * 9 + k] = f_new[currentIdx * 9 + reflect_k];
+                        f[k][currentIdx] = f_new[reflect_k][currentIdx];
                     } else {
                         if (barriers[sourceIdx]) {
-                            f[currentIdx * 9 + k] = f_new[currentIdx * 9 + opp[k]];
+                            f[k][currentIdx] = f_new[opp[k]][currentIdx];
                         } else {
-                            f[currentIdx * 9 + k] = f_new[sourceIdx * 9 + k];
+                            f[k][currentIdx] = f_new[k][sourceIdx];
                         }
                     }
                 }

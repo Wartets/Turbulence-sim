@@ -58,8 +58,8 @@ private:
     float maxVelocity;
     int threadCount;
     
-    std::vector<float> f;     
-    std::vector<float> f_new; 
+    std::vector<float> f[9];     
+    std::vector<float> f_new[9]; 
     std::vector<float> rho;   
     std::vector<float> ux;    
     std::vector<float> uy;

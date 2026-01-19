@@ -12,7 +12,7 @@ createFluidEngine().then(Module => {
             resolutionScale: 200,
             iterations: 2,
             paused: false,
-            dt: 1.5,
+            dt: 0.95,
             threads: navigator.hardwareConcurrency || 4
         },
 
@@ -57,15 +57,15 @@ createFluidEngine().then(Module => {
 
         brush: {
             type: 'combined',
-            size: 5,
+            size: 10,
             falloff: 0.26,
             vortexDirection: 1,
             erase: false,
-            velocityStrength: 2,
-            densityStrength: 0.8,
+            velocityStrength: 1.7,
+            densityStrength: 0.7,
             temperatureStrength: 4.0,
-            noiseStrength: 1.0,
-            dragStrength: 0.1,
+            noiseStrength: 0.9,
+            dragStrength: 0.2,
             expansionStrength: 1.0,
         },
 

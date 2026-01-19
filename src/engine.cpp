@@ -357,23 +357,30 @@ void FluidEngine::step(int iterations) {
 }
 
 void FluidEngine::collideAndStream() {
-    int size = w * h;
-
-    std::fill(forceX.begin(), forceX.end(), 0.0f);
-    std::fill(forceY.begin(), forceY.end(), 0.0f);
-
     parallel_for(0, h, [&](int startY, int endY) {
         for (int y = startY; y < endY; ++y) {
             for (int x = 0; x < w; ++x) {
-                int i = y * w + x;
-                if (barriers[i]) continue;
+                int idx = y * w + x;
                 
+                if (barriers[idx]) {
+                    rho[idx] = 1.0f;
+                    ux[idx] = 0.0f;
+                    uy[idx] = 0.0f;
+                    
+                    float feq[9];
+                    equilibrium(1.0f, 0.0f, 0.0f, feq);
+                    for(int k=0; k<9; ++k) {
+                        f_new[k][idx] = feq[k];
+                    }
+                    continue;
+                }
+
                 float r = 0.0f;
                 float u_val = 0.0f;
                 float v_val = 0.0f;
                 
                 for (int k = 0; k < 9; ++k) {
-                    float f_val = f[k][i];
+                    float f_val = f[k][idx];
                     r += f_val;
                     u_val += f_val * cx[k];
                     v_val += f_val * cy[k];
@@ -384,12 +391,112 @@ void FluidEngine::collideAndStream() {
                     v_val /= r;
                 }
                 
-                rho[i] = r;
-                ux[i] = u_val;
-                uy[i] = v_val;
+                rho[idx] = r;
+
+                float fx = gravityX + forceX[idx];
+                float fy = gravityY + buoyancy * temperature[idx] + forceY[idx];
+                
+                float u_eq = u_val + fx * dt;
+                float v_eq = v_val + fy * dt;
+                
+                if (velocityDissipation > 0.0f) {
+                    float damp = 1.0f - velocityDissipation;
+                    if (damp < 0.0f) damp = 0.0f;
+                    u_eq *= damp;
+                    v_eq *= damp;
+                }
+
+                limitVelocity(u_eq, v_eq);
+                ux[idx] = u_eq;
+                uy[idx] = v_eq;
+
+                float feq[9];
+                equilibrium(r, u_eq, v_eq, feq);
+
+                for (int k = 0; k < 9; ++k) {
+                    float f_out = f[k][idx] * (1.0f - omega) + feq[k] * omega;
+                    
+                    int nx = x + cx[k];
+                    int ny = y + cy[k];
+                    
+                    int dest_x = nx;
+                    int dest_y = ny;
+                    int dest_k = k;
+                    bool bounce = false;
+
+                    switch(boundaryType) {
+                        case 0: 
+                            dest_x = (nx + w) % w;
+                            dest_y = (ny + h) % h;
+                            break;
+                        case 1: 
+                            if (nx < 0 || nx >= w || ny < 0 || ny >= h) {
+                                bounce = true;
+                                dest_k = opp[k];
+                                dest_x = x;
+                                dest_y = y;
+                            }
+                            break;
+                        case 2: 
+                            dest_x = (nx + w) % w;
+                            if (ny < 0 || ny >= h) {
+                                bounce = true;
+                                dest_k = opp[k];
+                                dest_x = x;
+                                dest_y = y;
+                            }
+                            break;
+                        case 3: 
+                            dest_y = (ny + h) % h;
+                            if (nx < 0 || nx >= w) {
+                                bounce = true;
+                                dest_k = opp[k];
+                                dest_x = x;
+                                dest_y = y;
+                            }
+                            break;
+                        case 4: 
+                            if (nx < 0 || nx >= w) {
+                                bounce = true;
+                                dest_k = slip_v[k]; 
+                                dest_x = x;
+                                dest_y = y;
+                            } else if (ny < 0 || ny >= h) {
+                                bounce = true;
+                                dest_k = slip_h[k]; 
+                                dest_x = x;
+                                dest_y = y;
+                            }
+                            break;
+                        case 5: 
+                            dest_x = (nx + w) % w;
+                             if (ny < 0 || ny >= h) {
+                                bounce = true;
+                                dest_k = slip_h[k]; 
+                                dest_x = x;
+                                dest_y = y;
+                            }
+                            break;
+                    }
+
+                    if (bounce) {
+                        f_new[dest_k][idx] = f_out;
+                    } else {
+                        int n_idx = dest_y * w + dest_x;
+                        if (barriers[n_idx]) {
+                            f_new[opp[k]][idx] = f_out;
+                        } else {
+                            f_new[dest_k][n_idx] = f_out;
+                        }
+                    }
+                }
             }
         }
     });
+
+    for (int k = 0; k < 9; ++k) {
+        std::swap(f[k], f_new[k]);
+    }
 
     if (vorticityConfinement > 0.0f) {
         std::fill(curl.begin(), curl.end(), 0.0f);
@@ -408,7 +515,11 @@ void FluidEngine::collideAndStream() {
             for (int y = startY; y < endY; ++y) {
                 for (int x = 1; x < w - 1; ++x) {
                     int idx = y * w + x;
-                    if (barriers[idx]) continue;
+                    if (barriers[idx]) {
+                        forceX[idx] = 0.0f;
+                        forceY[idx] = 0.0f;
+                        continue;
+                    }
                     
                     float dc_dx = (std::abs(curl[idx + 1]) - std::abs(curl[idx - 1])) * 0.5f;
                     float dc_dy = (std::abs(curl[idx + w]) - std::abs(curl[idx - w])) * 0.5f;
@@ -418,124 +529,17 @@ void FluidEngine::collideAndStream() {
                         float scale = vorticityConfinement / mag_grad;
                         forceX[idx] = scale * dc_dy * curl[idx];
                         forceY[idx] = scale * -dc_dx * curl[idx];
+                    } else {
+                        forceX[idx] = 0.0f;
+                        forceY[idx] = 0.0f;
                     }
                 }
             }
         });
+    } else {
+        std::fill(forceX.begin(), forceX.end(), 0.0f);
+        std::fill(forceY.begin(), forceY.end(), 0.0f);
     }
-    
-    parallel_for(0, h, [&](int startY, int endY) {
-        for (int y = startY; y < endY; ++y) {
-            for (int x = 0; x < w; ++x) {
-                int i = y * w + x;
-                if (barriers[i]) {
-                    rho[i] = 1.0f;
-                    ux[i] = 0.0f;
-                    uy[i] = 0.0f;
-                    float feq[9];
-                    equilibrium(1.0f, 0.0f, 0.0f, feq);
-                    for(int k=0; k<9; ++k) {
-                        f_new[k][i] = feq[k];
-                    }
-                    continue;
-                }
-
-                float u_final = ux[i] + (gravityX + forceX[i]) * dt;
-                float v_final = uy[i] + (gravityY + buoyancy * temperature[i] + forceY[i]) * dt;
-                
-                if (velocityDissipation > 0.0f) {
-                    float damp = 1.0f - velocityDissipation;
-                    if (damp < 0.0f) damp = 0.0f;
-                    u_final *= damp;
-                    v_final *= damp;
-                }
-
-                limitVelocity(u_final, v_final);
-                ux[i] = u_final;
-                uy[i] = v_final;
-
-                float feq[9];
-                equilibrium(rho[i], u_final, v_final, feq);
-
-                for (int k = 0; k < 9; ++k) {
-                    f_new[k][i] = f[k][i] * (1.0f - omega) + feq[k] * omega;
-                }
-            }
-        }
-    });
-
-    parallel_for(0, h, [&](int startY, int endY) {
-        for (int y = startY; y < endY; ++y) {
-            for (int x = 0; x < w; ++x) {
-                int currentIdx = y * w + x;
-                
-                for (int k = 0; k < 9; ++k) {
-                    int sx = x - cx[k];
-                    int sy = y - cy[k];
-                    int sourceIdx = -1;
-                    int reflect_k = -1;
-
-                    switch(boundaryType) {
-                        case 0: // Periodic
-                            sx = (sx + w) % w;
-                            sy = (sy + h) % h;
-                            sourceIdx = sy * w + sx;
-                            break;
-                        case 1: // Box (no-slip)
-                            if (sx < 0 || sx >= w || sy < 0 || sy >= h) {
-                                reflect_k = opp[k];
-                            } else {
-                                sourceIdx = sy * w + sx;
-                            }
-                            break;
-                        case 2: // Channel X (periodic x, no-slip y)
-                            sx = (sx + w) % w;
-                            if (sy < 0 || sy >= h) {
-                                reflect_k = opp[k];
-                            } else {
-                                sourceIdx = sy * w + sx;
-                            }
-                            break;
-                        case 3: // Channel Y (no-slip x, periodic y)
-                            sy = (sy + h) % h;
-                            if (sx < 0 || sx >= w) {
-                                reflect_k = opp[k];
-                            } else {
-                                sourceIdx = sy * w + sx;
-                            }
-                            break;
-                        case 4: // Slip Box
-                            if (sx < 0 || sx >= w) {
-                                reflect_k = slip_v[k];
-                            } else if (sy < 0 || sy >= h) {
-                                reflect_k = slip_h[k];
-                            } else {
-                                sourceIdx = sy * w + sx;
-                            }
-                            break;
-                        case 5: // Slip Channel X (periodic x, slip y)
-                            sx = (sx + w) % w;
-                             if (sy < 0 || sy >= h) {
-                                reflect_k = slip_h[k];
-                            } else {
-                                sourceIdx = sy * w + sx;
-                            }
-                            break;
-                    }
-
-                    if (reflect_k != -1) {
-                        f[k][currentIdx] = f_new[reflect_k][currentIdx];
-                    } else {
-                        if (barriers[sourceIdx]) {
-                            f[k][currentIdx] = f_new[opp[k]][currentIdx];
-                        } else {
-                            f[k][currentIdx] = f_new[k][sourceIdx];
-                        }
-                    }
-                }
-            }
-        }
-    });
 }
 
 void FluidEngine::advectDye() {

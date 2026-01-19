@@ -62,6 +62,10 @@ private:
     std::vector<float> dye_new;
     std::vector<float> temperature;
     std::vector<float> temperature_new;
+    
+    std::vector<float> forceX;
+    std::vector<float> forceY;
+    std::vector<float> curl;
 
     void equilibrium(float r, float u, float v, float* feq);
     void collideAndStream();

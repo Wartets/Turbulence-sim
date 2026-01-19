@@ -97,7 +97,7 @@ createFluidEngine().then(Module => {
     const gui = new lil.GUI({ title: 'Turbulence Simulation' });
     
     const simFolder = gui.addFolder('Simulation').close();
-    simFolder.add(params.simulation, 'resolutionScale', [100, 150, 200, 250, 300, 400, 600, 800]).name('Grid Resolution').onChange(initSimulation);
+    simFolder.add(params.simulation, 'resolutionScale', [50, 75, 100, 125, 150, 175, 200, 250, 300, 400, 600, 800]).name('Grid Resolution').onChange(initSimulation);
     simFolder.add(params.simulation, 'iterations', 0, 20, 1).name('Iterations/Frame');
     simFolder.add(params.simulation, 'dt', 0.01, 2.0).name('Time Step (dt)').step(0.01).onChange(t => engine && engine.setDt(t));
     simFolder.add(params.simulation, 'threads', 1, 32, 1).name('CPU Threads').onChange(t => {

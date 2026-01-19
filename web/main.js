@@ -11,7 +11,7 @@ createFluidEngine().then(Module => {
         simulation: {
             resolutionScale: 150,
             iterations: 5,
-            paused: true,
+            paused: false,
             dt: 1.5,
             threads: navigator.hardwareConcurrency || 4
         },
@@ -105,7 +105,7 @@ createFluidEngine().then(Module => {
             engine.setThreadCount(t);
         }
     });
-    simFolder.add(params.simulation, 'paused').name('Pause');
+    simFolder.add(params.simulation, 'paused').name('Pause').listen();
 
     const physicsFolder = gui.addFolder('Physics');
     
@@ -165,7 +165,7 @@ createFluidEngine().then(Module => {
     viewFolder.add(params.visualization, 'vorticityBipolar').name('Bipolar Map');
     
     const particleFolder = viewFolder.addFolder('Particles');
-    particleFolder.add(params.particles, 'show').name('Show Particles');
+    particleFolder.add(params.particles, 'show').name('Show Particles').listen();
     particleFolder.add(params.particles, 'count', 0, 1000000, 10000).name('Particle Count').onChange(count => {
         if(renderer) renderer.initParticles(count);
     });
@@ -174,7 +174,7 @@ createFluidEngine().then(Module => {
     particleFolder.addColor(params.particles, 'color').name('Color');
 
     const inputFolder = gui.addFolder('Interaction');
-    const brushTypeController = inputFolder.add(params.brush, 'type', ['combined', 'velocity', 'density', 'temperature', 'vortex', 'expansion', 'noise', 'drag', 'obstacle']).name('Brush Mode');
+    const brushTypeController = inputFolder.add(params.brush, 'type', ['none', 'combined', 'velocity', 'density', 'temperature', 'vortex', 'expansion', 'noise', 'drag', 'obstacle']).name('Brush Mode');
     inputFolder.add(params.brush, 'size', 1, 100).name('Radius');
     const velocityStrengthController = inputFolder.add(params.brush, 'velocityStrength', 0.01, 10.0).name('Velocity Strength').step(0.01);
     const densityStrengthController = inputFolder.add(params.brush, 'densityStrength', 0.01, 10.0).name('Density Strength').step(0.01);
@@ -190,6 +190,7 @@ createFluidEngine().then(Module => {
     const updateBrushUI = () => {
         const type = params.brush.type;
 
+        const isNone = type === 'none';
         const isObstacle = type === 'obstacle';
         const isVortex = type === 'vortex';
         const isExpansion = type === 'expansion';
@@ -200,19 +201,20 @@ createFluidEngine().then(Module => {
         const isDensity = type === 'density' || type === 'combined';
         const isTemperature = type === 'temperature' || type === 'combined';
 
-        velocityStrengthController.show(isVelocity || isVortex);
+        velocityStrengthController.show(!isNone && (isVelocity || isVortex));
         if(isVortex) velocityStrengthController.name('Vortex Strength');
         else velocityStrengthController.name('Velocity Strength');
 
-        densityStrengthController.show(isDensity);
-        temperatureStrengthController.show(isTemperature);
+        densityStrengthController.show(!isNone && isDensity);
+        temperatureStrengthController.show(!isNone && isTemperature);
         
-        noiseStrengthController.show(isNoise);
-        expansionStrengthController.show(isExpansion);
-        dragStrengthController.show(isDrag);
+        noiseStrengthController.show(!isNone && isNoise);
+        expansionStrengthController.show(!isNone && isExpansion);
+        dragStrengthController.show(!isNone && isDrag);
 
-        falloffController.show(!isObstacle);
-        vortexController.show(isVortex);
+        falloffController.show(!isNone && !isObstacle);
+        vortexController.show(!isNone && isVortex);
+        eraseController.show(!isNone);
 
         if (isObstacle) {
             eraseController.name('Remove Obstacle');
@@ -280,6 +282,8 @@ createFluidEngine().then(Module => {
     };
 
     const handleInput = (clientX, clientY) => {
+        if (params.brush.type === 'none') return;
+
         const rect = canvas.getBoundingClientRect();
         
         const mx = clientX - rect.left;
@@ -301,8 +305,6 @@ createFluidEngine().then(Module => {
                 engine.clearRegion(simX, simY, Math.round(radius));
             } else {
                 
-                // Handle Dimensional Brushes (Vortex, Expansion, Noise, Drag)
-                // Mode mapping: 0=Vortex, 1=Divergence, 2=Noise, 3=Drag
                 if (brush.type === 'vortex') {
                     const str = brush.velocityStrength * brush.vortexDirection;
                     engine.applyDimensionalBrush(simX, simY, Math.round(radius), 0, str, brush.falloff);
@@ -314,7 +316,6 @@ createFluidEngine().then(Module => {
                     engine.applyDimensionalBrush(simX, simY, Math.round(radius), 3, brush.dragStrength, brush.falloff);
                 }
 
-                // Handle Painting Brushes (Velocity, Density, Temperature)
                 const paintVelocity = (brush.type === 'velocity' || brush.type === 'combined');
                 const paintDensity = (brush.type === 'density' || brush.type === 'combined');
                 const paintTemperature = (brush.type === 'temperature' || brush.type === 'combined');
@@ -367,6 +368,20 @@ createFluidEngine().then(Module => {
         setTimeout(initSimulation, 100);
     });
 
+    window.addEventListener('keydown', e => {
+        switch(e.key.toLowerCase()) {
+            case ' ':
+                params.simulation.paused = !params.simulation.paused;
+                break;
+            case 'r':
+                params.reset();
+                break;
+            case 'p':
+                params.particles.show = !params.particles.show;
+                break;
+        }
+    });
+
     canvas.addEventListener('mousedown', e => { 
         mouse.isDragging = true; 
         mouse.lastClientX = e.clientX; 
@@ -409,8 +424,13 @@ createFluidEngine().then(Module => {
     window.addEventListener('touchend', () => mouse.isDragging = false);
 
     function loop() {
-        if(!params.simulation.paused && params.simulation.iterations > 0) {
-            engine.step(params.simulation.iterations);
+        if(!params.simulation.paused) {
+            if (params.simulation.iterations > 0) {
+                engine.step(params.simulation.iterations);
+            }
+            if (params.particles.show) {
+                renderer.updateParticles(params.simulation.dt);
+            }
         }
 
         const uxArray = engine.getVelocityXView();
@@ -420,17 +440,13 @@ createFluidEngine().then(Module => {
         const dyeArray = engine.getDyeView();
         const tempArray = engine.getTemperatureView();
 
-        if (params.particles.show) {
-            renderer.updateParticles(params.simulation.dt);
-        }
-
         renderer.draw(uxArray, uyArray, rhoArray, barrierArray, dyeArray, tempArray, params.visualization);
 
         if (params.particles.show) {
             renderer.drawParticles(params);
         }
 
-        if (mouse.isOver && !mouse.isDragging) {
+        if (mouse.isOver && !mouse.isDragging && params.brush.type !== 'none') {
             const brush = params.brush;
             const canvasRadius = (brush.size / simWidth) * canvas.width;
             const color = brush.erase ? [1.0, 0.2, 0.2, 0.7] : [1.0, 1.0, 1.0, 0.7];

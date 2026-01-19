@@ -11,7 +11,7 @@ createFluidEngine().then(Module => {
         simulation: {
             resolutionScale: 150,
             iterations: 5,
-            paused: false,
+            paused: true,
             dt: 1.5,
             threads: navigator.hardwareConcurrency || 4
         },
@@ -39,6 +39,8 @@ createFluidEngine().then(Module => {
             colorScheme: 4, 
             contrast: 1.5,
             brightness: 1.0,
+            bias: 0.0,
+            power: 1.0,
             obstacleColor: '#4d4d4d',
             backgroundColor: '#00020A',
             vorticityBipolar: true,
@@ -149,11 +151,13 @@ createFluidEngine().then(Module => {
         'Inferno': 0, 'Magma': 1, 'Plasma': 2, 'Viridis': 3,
         'Turbo': 4, 'Grayscale': 5, 'Ice': 6, 'Cividis': 7, 'Coolwarm': 8
     }).name('Palette');
-    viewFolder.add(params.visualization, 'contrast', 0.1, 5.0).name('Contrast').step(0.05);
+    viewFolder.add(params.visualization, 'contrast', 0.1, 5.0).name('Contrast / Gain').step(0.05);
     viewFolder.add(params.visualization, 'brightness', 0.1, 2.0).name('Brightness').step(0.05);
+    viewFolder.add(params.visualization, 'bias', -5.0, 5.0).name('Bias / Offset').step(0.01).listen();
+    viewFolder.add(params.visualization, 'power', 0.1, 5.0).name('Gamma / Power').step(0.1);
     viewFolder.addColor(params.visualization, 'obstacleColor').name('Obstacle Color');
     viewFolder.addColor(params.visualization, 'backgroundColor').name('Background Color');
-    viewFolder.add(params.visualization, 'vorticityBipolar').name('Bipolar Vorticity');
+    viewFolder.add(params.visualization, 'vorticityBipolar').name('Bipolar Map');
     
     const particleFolder = viewFolder.addFolder('Particles');
     particleFolder.add(params.particles, 'show').name('Show Particles');

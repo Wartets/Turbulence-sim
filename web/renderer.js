@@ -19,7 +19,6 @@ class Renderer {
         this.particleUpdateProgram = this.createProgram(PARTICLE_UPDATE_VS, PARTICLE_UPDATE_FS);
         this.brushProgram = this.createProgram(BRUSH_VS, BRUSH_FS);
         
-        // Fixed: Passed this.gl.RED as the 'format' parameter for single-channel textures
         this.texUx = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
         this.texUy = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
         this.texRho = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
@@ -61,6 +60,8 @@ class Renderer {
             mode: this.gl.getUniformLocation(this.program, "u_mode"),
             contrast: this.gl.getUniformLocation(this.program, "u_contrast"),
             brightness: this.gl.getUniformLocation(this.program, "u_brightness"),
+            bias: this.gl.getUniformLocation(this.program, "u_bias"),
+            power: this.gl.getUniformLocation(this.program, "u_power"),
             colorScheme: this.gl.getUniformLocation(this.program, "u_color_scheme"),
             obstacleColor: this.gl.getUniformLocation(this.program, "u_obstacle_color"),
             backgroundColor: this.gl.getUniformLocation(this.program, "u_background_color"),
@@ -239,6 +240,8 @@ class Renderer {
         this.gl.uniform1i(this.uniforms.mode, vizParams.mode);
         this.gl.uniform1f(this.uniforms.contrast, vizParams.contrast);
         this.gl.uniform1f(this.uniforms.brightness, vizParams.brightness);
+        this.gl.uniform1f(this.uniforms.bias, vizParams.bias);
+        this.gl.uniform1f(this.uniforms.power, vizParams.power);
         this.gl.uniform1i(this.uniforms.colorScheme, vizParams.colorScheme);
 
         const ocolor = vizParams.obstacleColor;

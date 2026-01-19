@@ -86,6 +86,8 @@ uniform sampler2D u_temperature;
 uniform int u_mode;
 uniform float u_contrast;
 uniform float u_brightness;
+uniform float u_bias;
+uniform float u_power;
 uniform int u_color_scheme;
 uniform vec3 u_obstacle_color;
 uniform vec3 u_background_color;
@@ -182,47 +184,89 @@ void main() {
 
     float ux = texture(u_velocity_x, v_uv).r;
     float uy = texture(u_velocity_y, v_uv).r;
-    float rho = texture(u_density, v_uv).r;
     
     vec3 color = vec3(0.0);
     float val = 0.0;
     float activity = 0.0;
 
     if (u_mode == 0) { 
+        // Vorticity
         float curl = (dFdx(uy) - dFdy(ux)) * 100.0;
+        float raw = curl - u_bias;
+        
         if (u_vorticity_bipolar) {
-            val = curl * 0.5 * u_contrast + 0.5;
+            // Apply contrast
+            float scaled = raw * u_contrast * 0.5;
+            
+            // Signed power to preserve direction but adjust curve
+            float signedPow = sign(scaled) * pow(abs(scaled), u_power);
+            
+            // Map [-1, 1] range (after scaling) to [0, 1]
+            val = signedPow * 0.5 + 0.5;
+            
             activity = abs(val - 0.5) * 2.0; 
-            color = getPalette(val, u_color_scheme);
+            color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
         } else {
-            float absCurl = abs(curl * u_contrast);
-            val = absCurl;
+            // Unipolar magnitude
+            val = abs(raw) * u_contrast;
+            val = pow(max(0.0, val), u_power);
             activity = val;
-            color = getPalette(val, u_color_scheme);
+            color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
         }
     } 
     else if (u_mode == 1) { 
+        // Velocity
         float speed = sqrt(ux*ux + uy*uy);
-        val = speed * 4.0 * u_contrast;
+        // Subtract bias to allow seeing fluctuations in high gravity
+        val = max(0.0, speed - u_bias) * 4.0 * u_contrast;
+        val = pow(max(0.0, val), u_power);
         activity = val;
-        color = getPalette(val, u_color_scheme);
+        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
     } 
     else if (u_mode == 2) { 
-        val = texture(u_dye, v_uv).r * u_contrast;
+        // Density/Dye
+        float dye = texture(u_dye, v_uv).r;
+        val = max(0.0, dye - u_bias) * u_contrast;
+        val = pow(max(0.0, val), u_power);
         activity = val;
-        color = getPalette(val, u_color_scheme);
+        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
     }
     else if (u_mode == 3) {
-        val = (texture(u_temperature, v_uv).r * 0.1 + 0.5); 
-        float displayVal = val * u_contrast;
-        activity = abs(texture(u_temperature, v_uv).r * 0.1); 
-        color = getPalette(displayVal, u_color_scheme);
+        // Temperature
+        float temp = texture(u_temperature, v_uv).r;
+        
+        // Normalize roughly to 0..1 range before visual params
+        // Assuming temp range is small, pre-scale a bit
+        float normT = temp * 0.1;
+        
+        if (u_vorticity_bipolar) {
+            // Treat as deviation from ambient (0.0)
+            float scaled = (normT - u_bias) * u_contrast;
+            float signedPow = sign(scaled) * pow(abs(scaled), u_power);
+            val = signedPow * 0.5 + 0.5;
+            activity = abs(val - 0.5) * 2.0;
+        } else {
+            // Heat map style (0 to positive)
+            val = max(0.0, normT - u_bias + 0.5) * u_contrast;
+            val = pow(max(0.0, val), u_power);
+            activity = abs(temp * 0.1); 
+        }
+        
+        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
     }
 
     vec3 fluid_color = color * u_brightness;
+    // Activity based alpha mixing for background
     float intensity = clamp(activity * 5.0, 0.0, 1.0);
     
+    // Ensure background color is preserved where fluid is inactive
     vec3 final_color = mix(u_background_color, fluid_color, intensity);
+    
+    // For full-field displays like Background Velocity, we might want less alpha blending
+    if (u_mode == 1 || (u_mode == 0 && u_vorticity_bipolar) || (u_mode == 3 && u_vorticity_bipolar)) {
+         final_color = mix(u_background_color, fluid_color, clamp(u_brightness, 0.0, 1.0));
+    }
+
     outColor = vec4(final_color, 1.0);
 }`;
 

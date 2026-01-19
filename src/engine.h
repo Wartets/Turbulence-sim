@@ -1,5 +1,7 @@
 #pragma once
 #include <vector>
+#include <thread>
+#include <functional>
 #include <emscripten/bind.h>
 
 class FluidEngine {
@@ -17,6 +19,8 @@ public:
     void setThermalDiffusivity(float td);
     void setVorticityConfinement(float vc);
     void setMaxVelocity(float mv);
+    
+    void setThreadCount(int count);
 
     emscripten::val getDensityView();
     emscripten::val getVelocityXView();
@@ -43,6 +47,7 @@ private:
     float thermalDiffusivity;
     float vorticityConfinement;
     float maxVelocity;
+    int threadCount;
     
     std::vector<float> f;     
     std::vector<float> f_new; 
@@ -60,4 +65,6 @@ private:
     void advectDye();
     void advectTemperature();
     void limitVelocity(float &u, float &v);
+    
+    void parallel_for(int start, int end, std::function<void(int, int)> func);
 };

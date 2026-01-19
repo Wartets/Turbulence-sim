@@ -1,6 +1,7 @@
 #include "engine.h"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 using namespace emscripten;
 
@@ -11,7 +12,8 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1) {
+    std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
     int size = w * h;
     f.resize(size * 9);
     f_new.resize(size * 9);
@@ -30,6 +32,33 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
         for (int k = 0; k < 9; ++k) {
             f[i * 9 + k] = feq[k];
         }
+    }
+}
+
+void FluidEngine::setThreadCount(int count) {
+    std::cout << "DEBUG: setThreadCount called with " << count << std::endl;
+    threadCount = std::max(1, count);
+}
+
+void FluidEngine::parallel_for(int start, int end, std::function<void(int, int)> func) {
+    if (threadCount <= 1) {
+        func(start, end);
+    } else {
+        #ifdef __EMSCRIPTEN_PTHREADS__
+            std::vector<std::thread> threads;
+            int total = end - start;
+            int chunk = total / threadCount;
+            for (int i = 0; i < threadCount; ++i) {
+                int range_start = start + i * chunk;
+                int range_end = (i == threadCount - 1) ? end : range_start + chunk;
+                threads.emplace_back(func, range_start, range_end);
+            }
+            for (auto& t : threads) {
+                t.join();
+            }
+        #else
+            func(start, end);
+        #endif
     }
 }
 
@@ -129,7 +158,7 @@ void FluidEngine::addObstacle(int x, int y, int radius, bool remove) {
                 int ny = y + dy;
                 if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
                     int idx = ny * w + nx;
-                    barriers[idx] = remove ? 0 : 1;
+                    barriers[idx] = remove ? 0 : 255;
                     
                     if (!remove) {
                         ux[idx] = 0.0f;
@@ -357,45 +386,47 @@ void FluidEngine::collideAndStream() {
 }
 
 void FluidEngine::advectDye() {
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            int idx = y * w + x;
-            if (barriers[idx]) {
-                dye_new[idx] = 0.0f;
-                continue;
+    parallel_for(0, h, [&](int startY, int endY) {
+        for (int y = startY; y < endY; ++y) {
+            for (int x = 0; x < w; ++x) {
+                int idx = y * w + x;
+                if (barriers[idx]) {
+                    dye_new[idx] = 0.0f;
+                    continue;
+                }
+
+                float x_prev = (float)x - ux[idx] * dt;
+                float y_prev = (float)y - uy[idx] * dt;
+
+                if (x_prev < 0.5f) x_prev = 0.5f;
+                if (x_prev > w - 1.5f) x_prev = w - 1.5f;
+                if (y_prev < 0.5f) y_prev = 0.5f;
+                if (y_prev > h - 1.5f) y_prev = h - 1.5f;
+
+                int ix = static_cast<int>(x_prev);
+                int iy = static_cast<int>(y_prev);
+                float fx = x_prev - ix;
+                float fy = y_prev - iy;
+
+                int idx_tl = iy * w + ix;
+                int idx_tr = idx_tl + 1;
+                int idx_bl = (iy + 1) * w + ix;
+                int idx_br = idx_bl + 1;
+
+                float d_tl = barriers[idx_tl] ? 0.0f : dye[idx_tl];
+                float d_tr = barriers[idx_tr] ? 0.0f : dye[idx_tr];
+                float d_bl = barriers[idx_bl] ? 0.0f : dye[idx_bl];
+                float d_br = barriers[idx_br] ? 0.0f : dye[idx_br];
+                
+                float interpolated_dye = (1.0f - fx) * (1.0f - fy) * d_tl +
+                                         fx * (1.0f - fy) * d_tr +
+                                         (1.0f - fx) * fy * d_bl +
+                                         fx * fy * d_br;
+                
+                dye_new[idx] = interpolated_dye * (1.0f - decay);
             }
-
-            float x_prev = (float)x - ux[idx] * dt;
-            float y_prev = (float)y - uy[idx] * dt;
-
-            if (x_prev < 0.5f) x_prev = 0.5f;
-            if (x_prev > w - 1.5f) x_prev = w - 1.5f;
-            if (y_prev < 0.5f) y_prev = 0.5f;
-            if (y_prev > h - 1.5f) y_prev = h - 1.5f;
-
-            int ix = static_cast<int>(x_prev);
-            int iy = static_cast<int>(y_prev);
-            float fx = x_prev - ix;
-            float fy = y_prev - iy;
-
-            int idx_tl = iy * w + ix;
-            int idx_tr = idx_tl + 1;
-            int idx_bl = (iy + 1) * w + ix;
-            int idx_br = idx_bl + 1;
-
-            float d_tl = barriers[idx_tl] ? 0.0f : dye[idx_tl];
-            float d_tr = barriers[idx_tr] ? 0.0f : dye[idx_tr];
-            float d_bl = barriers[idx_bl] ? 0.0f : dye[idx_bl];
-            float d_br = barriers[idx_br] ? 0.0f : dye[idx_br];
-            
-            float interpolated_dye = (1.0f - fx) * (1.0f - fy) * d_tl +
-                                     fx * (1.0f - fy) * d_tr +
-                                     (1.0f - fx) * fy * d_bl +
-                                     fx * fy * d_br;
-            
-            dye_new[idx] = interpolated_dye * (1.0f - decay);
         }
-    }
+    });
     dye.swap(dye_new);
 }
 
@@ -404,45 +435,47 @@ val FluidEngine::getDyeView() {
 }
 
 void FluidEngine::advectTemperature() {
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            int idx = y * w + x;
-            if (barriers[idx]) {
-                temperature_new[idx] = 0.0f;
-                continue;
+    parallel_for(0, h, [&](int startY, int endY) {
+        for (int y = startY; y < endY; ++y) {
+            for (int x = 0; x < w; ++x) {
+                int idx = y * w + x;
+                if (barriers[idx]) {
+                    temperature_new[idx] = 0.0f;
+                    continue;
+                }
+
+                float x_prev = (float)x - ux[idx] * dt;
+                float y_prev = (float)y - uy[idx] * dt;
+
+                if (x_prev < 0.5f) x_prev = 0.5f;
+                if (x_prev > w - 1.5f) x_prev = w - 1.5f;
+                if (y_prev < 0.5f) y_prev = 0.5f;
+                if (y_prev > h - 1.5f) y_prev = h - 1.5f;
+
+                int ix = static_cast<int>(x_prev);
+                int iy = static_cast<int>(y_prev);
+                float fx = x_prev - ix;
+                float fy = y_prev - iy;
+
+                int idx_tl = iy * w + ix;
+                int idx_tr = idx_tl + 1;
+                int idx_bl = (iy + 1) * w + ix;
+                int idx_br = idx_bl + 1;
+
+                float t_tl = barriers[idx_tl] ? 0.0f : temperature[idx_tl];
+                float t_tr = barriers[idx_tr] ? 0.0f : temperature[idx_tr];
+                float t_bl = barriers[idx_bl] ? 0.0f : temperature[idx_bl];
+                float t_br = barriers[idx_br] ? 0.0f : temperature[idx_br];
+                
+                float interpolated_temp = (1.0f - fx) * (1.0f - fy) * t_tl +
+                                         fx * (1.0f - fy) * t_tr +
+                                         (1.0f - fx) * fy * t_bl +
+                                         fx * fy * t_br;
+                
+                temperature_new[idx] = interpolated_temp * (1.0f - thermalDiffusivity);
             }
-
-            float x_prev = (float)x - ux[idx] * dt;
-            float y_prev = (float)y - uy[idx] * dt;
-
-            if (x_prev < 0.5f) x_prev = 0.5f;
-            if (x_prev > w - 1.5f) x_prev = w - 1.5f;
-            if (y_prev < 0.5f) y_prev = 0.5f;
-            if (y_prev > h - 1.5f) y_prev = h - 1.5f;
-
-            int ix = static_cast<int>(x_prev);
-            int iy = static_cast<int>(y_prev);
-            float fx = x_prev - ix;
-            float fy = y_prev - iy;
-
-            int idx_tl = iy * w + ix;
-            int idx_tr = idx_tl + 1;
-            int idx_bl = (iy + 1) * w + ix;
-            int idx_br = idx_bl + 1;
-
-            float t_tl = barriers[idx_tl] ? 0.0f : temperature[idx_tl];
-            float t_tr = barriers[idx_tr] ? 0.0f : temperature[idx_tr];
-            float t_bl = barriers[idx_bl] ? 0.0f : temperature[idx_bl];
-            float t_br = barriers[idx_br] ? 0.0f : temperature[idx_br];
-            
-            float interpolated_temp = (1.0f - fx) * (1.0f - fy) * t_tl +
-                                     fx * (1.0f - fy) * t_tr +
-                                     (1.0f - fx) * fy * t_bl +
-                                     fx * fy * t_br;
-            
-            temperature_new[idx] = interpolated_temp * (1.0f - thermalDiffusivity);
         }
-    }
+    });
     temperature.swap(temperature_new);
 }
 
@@ -469,6 +502,7 @@ val FluidEngine::getBarrierView() {
 EMSCRIPTEN_BINDINGS(fluid_module) {
     class_<FluidEngine>("FluidEngine")
         .constructor<int, int>()
+        .function("setThreadCount", &FluidEngine::setThreadCount)
         .function("step", &FluidEngine::step)
         .function("addForce", &FluidEngine::addForce)
         .function("addDensity", &FluidEngine::addDensity)

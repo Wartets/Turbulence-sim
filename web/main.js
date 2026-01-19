@@ -1,106 +1,7 @@
-class ParticleSystem {
-    constructor(count, width, height) {
-        this.width = width;
-        this.height = height;
-        this.count = 0;
-        this.positions = new Float32Array(0);
-        this.setCount(count);
-    }
-
-    _resetParticle(i, barrierArray, simWidth, simHeight) {
-        let x, y, gx, gy, idx;
-        do {
-            x = Math.random() * this.width;
-            y = Math.random() * this.height;
-            if (simWidth > 0 && simHeight > 0) {
-                gx = Math.floor((x / this.width) * simWidth);
-                gy = Math.floor(((this.height - y) / this.height) * simHeight);
-                idx = gy * simWidth + gx;
-            } else {
-                idx = -1;
-            }
-        } while (barrierArray && simWidth > 0 && barrierArray[idx]);
-
-        this.positions[i * 2] = x;
-        this.positions[i * 2 + 1] = y;
-    }
-
-    setCount(newCount, barrierArray, simWidth, simHeight) {
-        if (this.count === newCount) return;
-
-        const oldPositions = this.positions;
-        const oldCount = this.count;
-
-        this.positions = new Float32Array(newCount * 2);
-        this.count = newCount;
-        
-        const copyCount = Math.min(oldCount, newCount);
-        if (oldPositions && copyCount > 0) {
-            this.positions.set(oldPositions.subarray(0, copyCount * 2));
-        }
-
-        if (newCount > oldCount) {
-            for (let i = oldCount; i < newCount; i++) {
-                this._resetParticle(i, barrierArray, simWidth, simHeight);
-            }
-        }
-    }
-
-    reset(barrierArray, simWidth, simHeight) {
-        for (let i = 0; i < this.count; i++) {
-            this._resetParticle(i, barrierArray, simWidth, simHeight);
-        }
-    }
-
-    update(ux, uy, barrierArray, simWidth, simHeight, dt) {
-        const scaleX = this.width / simWidth;
-        const scaleY = this.height / simHeight;
-
-        for (let i = 0; i < this.count; i++) {
-            let x = this.positions[i * 2];
-            let y = this.positions[i * 2 + 1];
-
-            let gx = (x / this.width) * simWidth;
-            let gy = ((this.height - y) / this.height) * simHeight;
-
-            let ix = Math.floor(gx);
-            let iy = Math.floor(gy);
-
-            if (ix < 0 || ix >= simWidth - 1 || iy < 0 || iy >= simHeight - 1 || (barrierArray && barrierArray[iy * simWidth + ix])) {
-                this._resetParticle(i, barrierArray, simWidth, simHeight);
-                continue;
-            }
-
-            let fx = gx - ix;
-            let fy = gy - iy;
-
-            let idx1 = iy * simWidth + ix;
-            let idx2 = iy * simWidth + (ix + 1);
-            let idx3 = (iy + 1) * simWidth + ix;
-            let idx4 = (iy + 1) * simWidth + (ix + 1);
-
-            let vx = (1-fx)*(1-fy)*ux[idx1] + fx*(1-fy)*ux[idx2] + (1-fx)*fy*ux[idx3] + fx*fy*ux[idx4];
-            let vy = (1-fx)*(1-fy)*uy[idx1] + fx*(1-fy)*uy[idx2] + (1-fx)*fy*uy[idx3] + fx*fy*uy[idx4];
-
-            x += vx * dt * scaleX;
-            y -= vy * dt * scaleY; 
-
-            if (x < 0) x += this.width;
-            if (x > this.width) x -= this.width;
-            if (y < 0) y += this.height;
-            if (y > this.height) y -= this.height;
-
-            this.positions[i * 2] = x;
-            this.positions[i * 2 + 1] = y;
-        }
-    }
-}
-
 createFluidEngine().then(Module => {
     const canvas = document.getElementById('simCanvas');
     let engine = null;
     let renderer = null;
-    let particles = null;
     let requestId = null;
     const fpsCounter = document.getElementById('fps-counter');
     let lastTime = 0;
@@ -108,16 +9,17 @@ createFluidEngine().then(Module => {
 
     const params = {
         simulation: {
-            resolutionScale: 250,
+            resolutionScale: 150,
             iterations: 5,
             paused: false,
             dt: 1.5,
+            threads: navigator.hardwareConcurrency || 4
         },
 
         physics: {
             viscosity: 0.8,
             decay: 0.001,
-            boundary: 0,
+            boundary: 1,
             gravityX: 0,
             gravityY: 0,
             buoyancy: 1.0,
@@ -127,8 +29,8 @@ createFluidEngine().then(Module => {
         },
 
         features: {
-            enableGravity: true,
-            enableBuoyancy: true,
+            enableGravity: false,
+            enableBuoyancy: false,
             enableVorticity: true,
         },
         
@@ -139,13 +41,13 @@ createFluidEngine().then(Module => {
             brightness: 1.0,
             obstacleColor: '#4d4d4d',
             backgroundColor: '#00020A',
-            vorticityBipolar: false,
+            vorticityBipolar: true,
         },
         
         particles: {
             show: false,
-            count: 20000,
-            size: 1.5,
+            count: 700000,
+            size: 0.5,
             opacity: 0.5,
             color: '#ffffff',
         },
@@ -153,20 +55,17 @@ createFluidEngine().then(Module => {
         brush: {
             type: 'combined',
             size: 5,
-            falloff: 0.5,
+            falloff: 0.26,
             vortexDirection: 1,
             erase: false,
-            velocityStrength: 0.8,
+            velocityStrength: 2,
             densityStrength: 0.8,
             temperatureStrength: 4.0,
         },
 
         reset: () => { 
             if(engine) engine.reset(); 
-            if(particles) {
-                const barrierArray = engine.getBarrierView();
-                particles.reset(barrierArray, simWidth, simHeight);
-            }
+            if(renderer) renderer.initParticles(params.particles.count);
         }
     };
 
@@ -195,6 +94,11 @@ createFluidEngine().then(Module => {
     simFolder.add(params.simulation, 'resolutionScale', [100, 150, 200, 250, 300, 400, 600, 800]).name('Grid Resolution').onChange(initSimulation);
     simFolder.add(params.simulation, 'iterations', 0, 20, 1).name('Iterations/Frame');
     simFolder.add(params.simulation, 'dt', 0.01, 2.0).name('Time Step (dt)').step(0.01).onChange(t => engine && engine.setDt(t));
+    simFolder.add(params.simulation, 'threads', 1, 32, 1).name('CPU Threads').onChange(t => {
+        if (engine && typeof engine.setThreadCount === 'function') {
+            engine.setThreadCount(t);
+        }
+    });
     simFolder.add(params.simulation, 'paused').name('Pause');
 
     const physicsFolder = gui.addFolder('Physics');
@@ -253,13 +157,10 @@ createFluidEngine().then(Module => {
     
     const particleFolder = viewFolder.addFolder('Particles');
     particleFolder.add(params.particles, 'show').name('Show Particles');
-    particleFolder.add(params.particles, 'count', 0, 50000, 1000).name('Particle Count').onChange(count => {
-        if (particles && engine) {
-            const barrierArray = engine.getBarrierView();
-            particles.setCount(count, barrierArray, simWidth, simHeight);
-        }
+    particleFolder.add(params.particles, 'count', 0, 10000000, 10000).name('Particle Count').onChange(count => {
+        if(renderer) renderer.initParticles(count);
     });
-    particleFolder.add(params.particles, 'size', 0.1, 10.0).name('Size');
+    particleFolder.add(params.particles, 'size', 0.01, 1.0).name('Size');
     particleFolder.add(params.particles, 'opacity', 0.0, 1.0).name('Opacity');
     particleFolder.addColor(params.particles, 'color').name('Color');
 
@@ -318,6 +219,14 @@ createFluidEngine().then(Module => {
         simWidth = Math.round(baseRes * aspect);
 
         engine = new Module.FluidEngine(simWidth, simHeight);
+        
+        console.log("FluidEngine instance created.");
+        if (engine) {
+            const proto = Object.getPrototypeOf(engine);
+            const methods = Object.getOwnPropertyNames(proto);
+            console.log("Available methods on FluidEngine:", methods.join(", "));
+        }
+
         engine.setViscosity(params.physics.viscosity);
         engine.setDecay(params.physics.decay);
         engine.setDt(params.simulation.dt);
@@ -325,15 +234,19 @@ createFluidEngine().then(Module => {
         engine.setThermalDiffusivity(params.physics.thermalDiffusivity);
         engine.setMaxVelocity(params.physics.maxVelocity);
         
+        if (typeof engine.setThreadCount === 'function') {
+            engine.setThreadCount(params.simulation.threads);
+            console.log("Thread count set to " + params.simulation.threads);
+        } else {
+            console.warn("setThreadCount not available in FluidEngine module. Check console logs for available methods.");
+        }
+        
         updateGravity();
         updateBuoyancy();
         updateVorticity();
         
         renderer = new Renderer(canvas, simWidth, simHeight);
-        
-        particles = new ParticleSystem(params.particles.count, canvas.width, canvas.height);
-        const barrierArray = engine.getBarrierView();
-        particles.reset(barrierArray, simWidth, simHeight);
+        renderer.initParticles(params.particles.count);
 
         updateBrushUI();
         loop();
@@ -473,13 +386,13 @@ createFluidEngine().then(Module => {
         const tempArray = engine.getTemperatureView();
 
         if (params.particles.show) {
-            particles.update(uxArray, uyArray, barrierArray, simWidth, simHeight, params.simulation.dt);
+            renderer.updateParticles(params.simulation.dt);
         }
 
         renderer.draw(uxArray, uyArray, rhoArray, barrierArray, dyeArray, tempArray, params.visualization);
 
         if (params.particles.show) {
-            renderer.drawParticles(particles.positions, particles.count, params);
+            renderer.drawParticles(params);
         }
 
         if (mouse.isOver && !mouse.isDragging) {

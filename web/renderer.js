@@ -4,8 +4,9 @@ class Renderer {
         if (!this.gl) throw new Error("WebGL2 not supported");
         
         this.gl.getExtension("EXT_color_buffer_float");
-        const linearExtension = this.gl.getExtension("OES_texture_float_linear");
+        this.gl.getExtension("OES_texture_float_linear");
         
+        const linearExtension = this.gl.getExtension("OES_texture_float_linear");
         this.filter = linearExtension ? this.gl.LINEAR : this.gl.NEAREST;
 
         this.width = width;
@@ -14,15 +15,17 @@ class Renderer {
         this.gl.pixelStorei(this.gl.UNPACK_ALIGNMENT, 1);
 
         this.program = this.createProgram(VS_SOURCE, FS_SOURCE);
-        this.particleProgram = this.createProgram(PARTICLE_VS, PARTICLE_FS);
+        this.particleRenderProgram = this.createProgram(PARTICLE_VS, PARTICLE_FS);
+        this.particleUpdateProgram = this.createProgram(PARTICLE_UPDATE_VS, PARTICLE_UPDATE_FS);
         this.brushProgram = this.createProgram(BRUSH_VS, BRUSH_FS);
         
-        this.texUx = this.createTexture(this.gl.R32F, this.gl.FLOAT);
-        this.texUy = this.createTexture(this.gl.R32F, this.gl.FLOAT);
-        this.texRho = this.createTexture(this.gl.R32F, this.gl.FLOAT);
-        this.texObstacles = this.createTexture(this.gl.R8, this.gl.UNSIGNED_BYTE);
-        this.texDye = this.createTexture(this.gl.R32F, this.gl.FLOAT);
-        this.texTemperature = this.createTexture(this.gl.R32F, this.gl.FLOAT);
+        // Fixed: Passed this.gl.RED as the 'format' parameter for single-channel textures
+        this.texUx = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
+        this.texUy = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
+        this.texRho = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
+        this.texObstacles = this.createTexture(this.gl.R8, this.gl.RED, this.gl.UNSIGNED_BYTE, this.width, this.height);
+        this.texDye = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
+        this.texTemperature = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
 
         this.quadBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
@@ -30,8 +33,13 @@ class Renderer {
             -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1
         ]), this.gl.STATIC_DRAW);
 
-        this.particleBuffer = this.gl.createBuffer();
-        
+        this.particleIndexBuffer = this.gl.createBuffer();
+        this.particleFBO = this.gl.createFramebuffer();
+        this.texPartA = null;
+        this.texPartB = null;
+        this.particleCount = 0;
+        this.particleTexDim = 0;
+
         this.brushBuffer = this.gl.createBuffer();
         this.brushVertexCount = 48;
         const brushVerts = [];
@@ -59,10 +67,21 @@ class Renderer {
             vorticityBipolar: this.gl.getUniformLocation(this.program, "u_vorticity_bipolar")
         };
         
-        this.particleUniforms = {
-            resolution: this.gl.getUniformLocation(this.particleProgram, "u_resolution"),
-            size: this.gl.getUniformLocation(this.particleProgram, "u_particle_size"),
-            color: this.gl.getUniformLocation(this.particleProgram, "u_particle_color")
+        this.particleRenderUniforms = {
+            positions: this.gl.getUniformLocation(this.particleRenderProgram, "u_positions"),
+            resolution: this.gl.getUniformLocation(this.particleRenderProgram, "u_resolution"),
+            size: this.gl.getUniformLocation(this.particleRenderProgram, "u_particle_size"),
+            color: this.gl.getUniformLocation(this.particleRenderProgram, "u_particle_color")
+        };
+
+        this.particleUpdateUniforms = {
+            currPos: this.gl.getUniformLocation(this.particleUpdateProgram, "u_curr_pos"),
+            velX: this.gl.getUniformLocation(this.particleUpdateProgram, "u_vel_x"),
+            velY: this.gl.getUniformLocation(this.particleUpdateProgram, "u_vel_y"),
+            obstacles: this.gl.getUniformLocation(this.particleUpdateProgram, "u_obstacles"),
+            dt: this.gl.getUniformLocation(this.particleUpdateProgram, "u_dt"),
+            simDim: this.gl.getUniformLocation(this.particleUpdateProgram, "u_sim_dim"),
+            seed: this.gl.getUniformLocation(this.particleUpdateProgram, "u_seed")
         };
 
         this.brushUniforms = {
@@ -71,6 +90,32 @@ class Renderer {
             radius: this.gl.getUniformLocation(this.brushProgram, "u_radius"),
             color: this.gl.getUniformLocation(this.brushProgram, "u_color")
         };
+    }
+
+    initParticles(count) {
+        this.particleCount = count;
+        this.particleTexDim = Math.ceil(Math.sqrt(count));
+        const totalPixels = this.particleTexDim * this.particleTexDim;
+        
+        const initialData = new Float32Array(totalPixels * 4);
+        for(let i=0; i<count; i++) {
+            initialData[i*4 + 0] = Math.random() * this.width;
+            initialData[i*4 + 1] = Math.random() * this.height;
+            initialData[i*4 + 2] = 0; 
+            initialData[i*4 + 3] = 0; 
+        }
+
+        if(this.texPartA) this.gl.deleteTexture(this.texPartA);
+        if(this.texPartB) this.gl.deleteTexture(this.texPartB);
+
+        this.texPartA = this.createTexture(this.gl.RGBA32F, this.gl.RGBA, this.gl.FLOAT, this.particleTexDim, this.particleTexDim, initialData);
+        this.texPartB = this.createTexture(this.gl.RGBA32F, this.gl.RGBA, this.gl.FLOAT, this.particleTexDim, this.particleTexDim, initialData);
+
+        const indices = new Float32Array(count);
+        for(let i=0; i<count; i++) indices[i] = i;
+        
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleIndexBuffer);
+        this.gl.bufferData(this.gl.ARRAY_BUFFER, indices, this.gl.STATIC_DRAW);
     }
 
     createProgram(vs, fs) {
@@ -91,15 +136,64 @@ class Renderer {
         return prog;
     }
 
-    createTexture(internalFormat, type) {
+    createTexture(internalFormat, format, type, w, h, data = null) {
         const t = this.gl.createTexture();
         this.gl.bindTexture(this.gl.TEXTURE_2D, t);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.filter);
-        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.filter);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
         this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, internalFormat, this.width, this.height, 0, this.gl.RED, type, null);
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, internalFormat, w, h, 0, format, type, data);
+        
+        const glError = this.gl.getError();
+        if (glError !== this.gl.NO_ERROR) {
+            console.error(`WebGL Error in createTexture (IntFmt: ${internalFormat}, Fmt: ${format}, Type: ${type}): ${glError}`);
+        }
+        
         return t;
+    }
+
+    updateParticles(dt) {
+        if(this.particleCount === 0) return;
+
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.particleFBO);
+        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.texPartB, 0);
+        this.gl.viewport(0, 0, this.particleTexDim, this.particleTexDim);
+
+        this.gl.useProgram(this.particleUpdateProgram);
+
+        this.gl.activeTexture(this.gl.TEXTURE0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPartA);
+        this.gl.uniform1i(this.particleUpdateUniforms.currPos, 0);
+
+        this.gl.activeTexture(this.gl.TEXTURE1);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUx);
+        this.gl.uniform1i(this.particleUpdateUniforms.velX, 1);
+
+        this.gl.activeTexture(this.gl.TEXTURE2);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
+        this.gl.uniform1i(this.particleUpdateUniforms.velY, 2);
+
+        this.gl.activeTexture(this.gl.TEXTURE3);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texObstacles);
+        this.gl.uniform1i(this.particleUpdateUniforms.obstacles, 3);
+
+        this.gl.uniform1f(this.particleUpdateUniforms.dt, dt);
+        this.gl.uniform2f(this.particleUpdateUniforms.simDim, this.width, this.height);
+        this.gl.uniform1f(this.particleUpdateUniforms.seed, Math.random() * 100.0);
+
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
+        const positionLoc = this.gl.getAttribLocation(this.particleUpdateProgram, "a_position");
+        this.gl.enableVertexAttribArray(positionLoc);
+        this.gl.vertexAttribPointer(positionLoc, 2, this.gl.FLOAT, false, 0, 0);
+
+        this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+
+        let temp = this.texPartA;
+        this.texPartA = this.texPartB;
+        this.texPartB = temp;
     }
 
     draw(uxData, uyData, rhoData, barrierData, dyeData, tempData, vizParams) {
@@ -164,28 +258,34 @@ class Renderer {
         this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
     }
 
-    drawParticles(particleData, count, params) {
+    drawParticles(params) {
+        if(this.particleCount === 0) return;
+
+        this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
         this.gl.enable(this.gl.BLEND);
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE);
 
-        this.gl.useProgram(this.particleProgram);
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleBuffer);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, particleData, this.gl.DYNAMIC_DRAW);
+        this.gl.useProgram(this.particleRenderProgram);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleIndexBuffer);
         
-        const posLoc = this.gl.getAttribLocation(this.particleProgram, "a_position");
+        const posLoc = this.gl.getAttribLocation(this.particleRenderProgram, "a_index");
         this.gl.enableVertexAttribArray(posLoc);
-        this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+        this.gl.vertexAttribPointer(posLoc, 1, this.gl.FLOAT, false, 0, 0);
         
-        this.gl.uniform2f(this.particleUniforms.resolution, this.gl.canvas.width, this.gl.canvas.height);
-        this.gl.uniform1f(this.particleUniforms.size, params.particles.size);
+        this.gl.activeTexture(this.gl.TEXTURE0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPartA);
+        this.gl.uniform1i(this.particleRenderUniforms.positions, 0);
+
+        this.gl.uniform2f(this.particleRenderUniforms.resolution, this.width, this.height);
+        this.gl.uniform1f(this.particleRenderUniforms.size, params.particles.size);
         
         const pcolor = params.particles.color;
         const r = parseInt(pcolor.slice(1, 3), 16) / 255;
         const g = parseInt(pcolor.slice(3, 5), 16) / 255;
         const b = parseInt(pcolor.slice(5, 7), 16) / 255;
-        this.gl.uniform4f(this.particleUniforms.color, r, g, b, params.particles.opacity);
+        this.gl.uniform4f(this.particleRenderUniforms.color, r, g, b, params.particles.opacity);
         
-        this.gl.drawArrays(this.gl.POINTS, 0, count);
+        this.gl.drawArrays(this.gl.POINTS, 0, this.particleCount);
         
         this.gl.disable(this.gl.BLEND);
     }
@@ -193,19 +293,20 @@ class Renderer {
     drawBrush(x, y, radius, color) {
         this.gl.enable(this.gl.BLEND);
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
-        
         this.gl.useProgram(this.brushProgram);
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
-
-        const posLoc = this.gl.getAttribLocation(this.brushProgram, "a_position");
-        this.gl.enableVertexAttribArray(posLoc);
-        this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
 
         this.gl.uniform2f(this.brushUniforms.resolution, this.gl.canvas.width, this.gl.canvas.height);
         this.gl.uniform2f(this.brushUniforms.center, x, y);
         this.gl.uniform1f(this.brushUniforms.radius, radius);
-        this.gl.uniform4fv(this.brushUniforms.color, color);
+        this.gl.uniform4f(this.brushUniforms.color, color[0], color[1], color[2], color[3]);
 
-        this.gl.drawArrays(this.gl.LINE_LOOP, 0, this.brushVertexCount);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
+        const posLoc = this.gl.getAttribLocation(this.brushProgram, "a_position");
+        this.gl.enableVertexAttribArray(posLoc);
+        this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+
+        this.gl.drawArrays(this.gl.TRIANGLE_FAN, 0, this.brushVertexCount);
+        
+        this.gl.disable(this.gl.BLEND);
     }
 }

@@ -6,6 +6,74 @@ void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
 }`;
 
+const PARTICLE_UPDATE_VS = `#version 300 es
+in vec2 a_position;
+void main() {
+    gl_Position = vec4(a_position, 0.0, 1.0);
+}`;
+
+const PARTICLE_UPDATE_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_curr_pos;
+uniform sampler2D u_vel_x;
+uniform sampler2D u_vel_y;
+uniform sampler2D u_obstacles;
+uniform float u_dt;
+uniform vec2 u_sim_dim;
+uniform float u_seed;
+
+out vec4 outNewPos;
+
+float rand(vec2 co) {
+    return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_FragCoord.xy);
+    vec4 pos = texelFetch(u_curr_pos, coord, 0);
+    vec2 p = pos.xy;
+    
+    vec2 uv = p / u_sim_dim;
+    
+    float vx = texture(u_vel_x, uv).r;
+    float vy = texture(u_vel_y, uv).r;
+    float obs = texture(u_obstacles, uv).r;
+
+    p += vec2(vx, vy) * u_dt;
+
+    if (p.x < 0.0) p.x += u_sim_dim.x;
+    if (p.x >= u_sim_dim.x) p.x -= u_sim_dim.x;
+    if (p.y < 0.0) p.y += u_sim_dim.y;
+    if (p.y >= u_sim_dim.y) p.y -= u_sim_dim.y;
+
+    vec2 newUV = p / u_sim_dim;
+    float newObs = texture(u_obstacles, newUV).r;
+
+    bool isDead = (pos.x < -10.0);
+    bool hitObstacle = (obs > 0.1) || (newObs > 0.1);
+    bool randomRespawn = (rand(vec2(u_seed, float(coord.x) + float(coord.y)*u_sim_dim.x)) > 0.999);
+
+    if (isDead || hitObstacle || randomRespawn) {
+        bool found = false;
+        for(int i = 0; i < 15; i++) {
+            float rx = rand(vec2(u_seed + float(i)*1.1, float(coord.x) + float(i)*0.3)) * u_sim_dim.x;
+            float ry = rand(vec2(u_seed - float(i)*1.2, float(coord.y) - float(i)*0.4)) * u_sim_dim.y;
+            vec2 checkUV = vec2(rx, ry) / u_sim_dim;
+            
+            if (texture(u_obstacles, checkUV).r < 0.1) {
+                p = vec2(rx, ry);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+             p = vec2(-100.0, -100.0);
+        }
+    }
+
+    outNewPos = vec4(p, 0.0, 1.0);
+}`;
+
 const FS_SOURCE = `#version 300 es
 precision highp float;
 uniform sampler2D u_velocity_x;
@@ -106,8 +174,8 @@ vec3 getPalette(float val, int scheme) {
 }
 
 void main() {
-    float is_obstacle = step(0.5, texture(u_obstacles, v_uv).r);
-    if (is_obstacle > 0.5) {
+    float obstacle_val = texture(u_obstacles, v_uv).r;
+    if (obstacle_val > 0.1) {
         outColor = vec4(u_obstacle_color, 1.0);
         return;
     }
@@ -118,46 +186,59 @@ void main() {
     
     vec3 color = vec3(0.0);
     float val = 0.0;
+    float activity = 0.0;
 
     if (u_mode == 0) { 
         float curl = (dFdx(uy) - dFdy(ux)) * 100.0;
         if (u_vorticity_bipolar) {
             val = curl * 0.5 * u_contrast + 0.5;
+            activity = abs(val - 0.5) * 2.0; 
             color = getPalette(val, u_color_scheme);
         } else {
             float absCurl = abs(curl * u_contrast);
-            color = getPalette(absCurl, u_color_scheme);
+            val = absCurl;
+            activity = val;
+            color = getPalette(val, u_color_scheme);
         }
     } 
     else if (u_mode == 1) { 
         float speed = sqrt(ux*ux + uy*uy);
         val = speed * 4.0 * u_contrast;
+        activity = val;
         color = getPalette(val, u_color_scheme);
     } 
     else if (u_mode == 2) { 
         val = texture(u_dye, v_uv).r * u_contrast;
+        activity = val;
         color = getPalette(val, u_color_scheme);
     }
     else if (u_mode == 3) {
-        val = (texture(u_temperature, v_uv).r * 0.1 + 0.5) * u_contrast;
-        color = getPalette(val, u_color_scheme);
+        val = (texture(u_temperature, v_uv).r * 0.1 + 0.5); 
+        float displayVal = val * u_contrast;
+        activity = abs(texture(u_temperature, v_uv).r * 0.1); 
+        color = getPalette(displayVal, u_color_scheme);
     }
 
     vec3 fluid_color = color * u_brightness;
-    float intensity = clamp(length(fluid_color) * 5.0, 0.0, 1.0);
-    vec3 final_fluid_color = mix(u_background_color, fluid_color, intensity);
-
-    outColor = vec4(final_fluid_color, 1.0);
-}
-`;
+    float intensity = clamp(activity * 5.0, 0.0, 1.0);
+    
+    vec3 final_color = mix(u_background_color, fluid_color, intensity);
+    outColor = vec4(final_color, 1.0);
+}`;
 
 const PARTICLE_VS = `#version 300 es
-in vec2 a_position;
+in float a_index;
+uniform sampler2D u_positions;
 uniform vec2 u_resolution;
 uniform float u_particle_size;
+
 void main() {
-    vec2 clipSpace = (a_position / u_resolution) * 2.0 - 1.0;
-    gl_Position = vec4(clipSpace * vec2(1, -1), 0.0, 1.0);
+    int texSize = textureSize(u_positions, 0).x;
+    int x = int(a_index) % texSize;
+    int y = int(a_index) / texSize;
+    vec4 posData = texelFetch(u_positions, ivec2(x, y), 0);
+    vec2 clipSpace = (posData.xy / u_resolution) * 2.0 - 1.0;
+    gl_Position = vec4(clipSpace, 0.0, 1.0);
     gl_PointSize = u_particle_size;
 }`;
 

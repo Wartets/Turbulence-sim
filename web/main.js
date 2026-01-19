@@ -126,7 +126,7 @@ createFluidEngine().then(Module => {
     const advancedPhysicsFolder = physicsFolder.addFolder('Advanced').close();
     advancedPhysicsFolder.add(params.physics, 'maxVelocity', 0.01, 1.0).name('Max Velocity (Stability)').step(0.01).onChange(v => engine && engine.setMaxVelocity(v));
 
-    const gravityFolder = physicsFolder.addFolder('Gravity');
+    const gravityFolder = physicsFolder.addFolder('Gravity').close();
     const gravityXController = gravityFolder.add(params.physics, 'gravityX', -10, 10).name('X Component').step(0.01).onChange(updateGravity);
     const gravityYController = gravityFolder.add(params.physics, 'gravityY', -10, 10).name('Y Component').step(0.01).onChange(updateGravity);
     gravityFolder.add(params.features, 'enableGravity').name('Enable').onChange(enabled => {
@@ -135,7 +135,7 @@ createFluidEngine().then(Module => {
         updateGravity();
     });
 
-    const vorticityFolder = physicsFolder.addFolder('Vorticity');
+    const vorticityFolder = physicsFolder.addFolder('Vorticity').close();
     const vorticityController = vorticityFolder.add(params.physics, 'vorticityConfinement', 0, 1.0).name('Strength').step(0.01).onChange(updateVorticity);
     vorticityFolder.add(params.features, 'enableVorticity').name('Enable').onChange(enabled => {
         vorticityController.enable(enabled);

@@ -191,23 +191,26 @@ void main() {
 
     if (u_mode == 0) { 
         // Vorticity
-        float curl = (dFdx(uy) - dFdy(ux)) * 100.0;
+        ivec2 texSize = textureSize(u_velocity_x, 0);
+        vec2 texelSize = 1.0 / vec2(texSize);
+
+        float uy_r = texture(u_velocity_y, v_uv + vec2(texelSize.x, 0.0)).r;
+        float uy_l = texture(u_velocity_y, v_uv - vec2(texelSize.x, 0.0)).r;
+        float ux_t = texture(u_velocity_x, v_uv + vec2(0.0, texelSize.y)).r;
+        float ux_b = texture(u_velocity_x, v_uv - vec2(0.0, texelSize.y)).r;
+
+        float curl = (uy_r - uy_l) - (ux_t - ux_b);
+        curl *= 2.0;
+
         float raw = curl - u_bias;
         
         if (u_vorticity_bipolar) {
-            // Apply contrast
             float scaled = raw * u_contrast * 0.5;
-            
-            // Signed power to preserve direction but adjust curve
             float signedPow = sign(scaled) * pow(abs(scaled), u_power);
-            
-            // Map [-1, 1] range (after scaling) to [0, 1]
             val = signedPow * 0.5 + 0.5;
-            
             activity = abs(val - 0.5) * 2.0; 
             color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
         } else {
-            // Unipolar magnitude
             val = abs(raw) * u_contrast;
             val = pow(max(0.0, val), u_power);
             activity = val;
@@ -217,7 +220,6 @@ void main() {
     else if (u_mode == 1) { 
         // Velocity
         float speed = sqrt(ux*ux + uy*uy);
-        // Subtract bias to allow seeing fluctuations in high gravity
         val = max(0.0, speed - u_bias) * 4.0 * u_contrast;
         val = pow(max(0.0, val), u_power);
         activity = val;
@@ -234,19 +236,14 @@ void main() {
     else if (u_mode == 3) {
         // Temperature
         float temp = texture(u_temperature, v_uv).r;
-        
-        // Normalize roughly to 0..1 range before visual params
-        // Assuming temp range is small, pre-scale a bit
         float normT = temp * 0.1;
         
         if (u_vorticity_bipolar) {
-            // Treat as deviation from ambient (0.0)
             float scaled = (normT - u_bias) * u_contrast;
             float signedPow = sign(scaled) * pow(abs(scaled), u_power);
             val = signedPow * 0.5 + 0.5;
             activity = abs(val - 0.5) * 2.0;
         } else {
-            // Heat map style (0 to positive)
             val = max(0.0, normT - u_bias + 0.5) * u_contrast;
             val = pow(max(0.0, val), u_power);
             activity = abs(temp * 0.1); 
@@ -256,13 +253,9 @@ void main() {
     }
 
     vec3 fluid_color = color * u_brightness;
-    // Activity based alpha mixing for background
     float intensity = clamp(activity * 5.0, 0.0, 1.0);
-    
-    // Ensure background color is preserved where fluid is inactive
     vec3 final_color = mix(u_background_color, fluid_color, intensity);
     
-    // For full-field displays like Background Velocity, we might want less alpha blending
     if (u_mode == 1 || (u_mode == 0 && u_vorticity_bipolar) || (u_mode == 3 && u_vorticity_bipolar)) {
          final_color = mix(u_background_color, fluid_color, clamp(u_brightness, 0.0, 1.0));
     }

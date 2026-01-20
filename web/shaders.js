@@ -293,7 +293,10 @@ uniform vec2 u_resolution;
 uniform vec2 u_center;
 uniform float u_radius;
 
+out vec2 v_uv;
+
 void main() {
+    v_uv = a_position; 
     vec2 pos = u_center + a_position * u_radius;
     vec2 clipSpace = (pos / u_resolution) * 2.0 - 1.0;
     gl_Position = vec4(clipSpace * vec2(1.0, -1.0), 0.0, 1.0);
@@ -302,7 +305,34 @@ void main() {
 const BRUSH_FS = `#version 300 es
 precision mediump float;
 uniform vec4 u_color;
+uniform float u_angle;
+uniform float u_aspect;
+uniform int u_shape;
+
+in vec2 v_uv;
 out vec4 outColor;
+
 void main() {
-    outColor = u_color;
+    vec2 p = v_uv; 
+    
+    float rad = radians(u_angle);
+    float c = cos(-rad);
+    float s = sin(-rad);
+    vec2 r = vec2(p.x * c - p.y * s, p.x * s + p.y * c);
+    
+    r.y /= max(0.01, u_aspect);
+    
+    float dist = 0.0;
+    
+    if (u_shape == 0) {
+        dist = length(r);
+    } else if (u_shape == 1) {
+        dist = max(abs(r.x), abs(r.y));
+    } else if (u_shape == 2) {
+        dist = (abs(r.x) + abs(r.y)) * 0.7071;
+    }
+    
+    float alpha = 1.0 - smoothstep(0.9, 1.0, dist);
+    
+    outColor = vec4(u_color.rgb, u_color.a * alpha);
 }`;

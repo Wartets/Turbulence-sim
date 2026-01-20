@@ -40,12 +40,11 @@ class Renderer {
         this.particleTexDim = 0;
 
         this.brushBuffer = this.gl.createBuffer();
-        this.brushVertexCount = 48;
-        const brushVerts = [];
-        for (let i = 0; i < this.brushVertexCount; i++) {
-            const angle = (i / this.brushVertexCount) * Math.PI * 2;
-            brushVerts.push(Math.cos(angle), Math.sin(angle));
-        }
+        this.brushVertexCount = 6;
+        const brushVerts = [
+            -1, -1,  1, -1, -1,  1,
+            -1,  1,  1, -1,  1,  1
+        ];
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
         this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(brushVerts), this.gl.STATIC_DRAW);
 
@@ -89,7 +88,10 @@ class Renderer {
             resolution: this.gl.getUniformLocation(this.brushProgram, "u_resolution"),
             center: this.gl.getUniformLocation(this.brushProgram, "u_center"),
             radius: this.gl.getUniformLocation(this.brushProgram, "u_radius"),
-            color: this.gl.getUniformLocation(this.brushProgram, "u_color")
+            color: this.gl.getUniformLocation(this.brushProgram, "u_color"),
+            angle: this.gl.getUniformLocation(this.brushProgram, "u_angle"),
+            aspect: this.gl.getUniformLocation(this.brushProgram, "u_aspect"),
+            shape: this.gl.getUniformLocation(this.brushProgram, "u_shape")
         };
     }
 
@@ -293,7 +295,7 @@ class Renderer {
         this.gl.disable(this.gl.BLEND);
     }
 
-    drawBrush(x, y, radius, color) {
+    drawBrush(x, y, radius, color, angle, aspect, shape) {
         this.gl.enable(this.gl.BLEND);
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
         this.gl.useProgram(this.brushProgram);
@@ -302,13 +304,17 @@ class Renderer {
         this.gl.uniform2f(this.brushUniforms.center, x, y);
         this.gl.uniform1f(this.brushUniforms.radius, radius);
         this.gl.uniform4f(this.brushUniforms.color, color[0], color[1], color[2], color[3]);
+        
+        this.gl.uniform1f(this.brushUniforms.angle, angle);
+        this.gl.uniform1f(this.brushUniforms.aspect, aspect);
+        this.gl.uniform1i(this.brushUniforms.shape, shape);
 
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
         const posLoc = this.gl.getAttribLocation(this.brushProgram, "a_position");
         this.gl.enableVertexAttribArray(posLoc);
         this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
 
-        this.gl.drawArrays(this.gl.TRIANGLE_FAN, 0, this.brushVertexCount);
+        this.gl.drawArrays(this.gl.TRIANGLES, 0, this.brushVertexCount);
         
         this.gl.disable(this.gl.BLEND);
     }

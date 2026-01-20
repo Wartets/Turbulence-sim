@@ -41,8 +41,8 @@ public:
     void addTemperature(int x, int y, float amount);
     void clearRegion(int x, int y, int radius);
     void addObstacle(int x, int y, int radius, bool remove);
-    void applyDimensionalBrush(int x, int y, int radius, int mode, float strength, float falloff);
-    void applyGenericBrush(int x, int y, int radius, float fx, float fy, float densityAmt, float tempAmt, float falloff);
+    void applyDimensionalBrush(int x, int y, int radius, int mode, float strength, float falloff, float angle, float aspectRatio, int shape, int falloffMode);
+    void applyGenericBrush(int x, int y, int radius, float fx, float fy, float densityAmt, float tempAmt, float falloff, float angle, float aspectRatio, int shape, int falloffMode);
 
 private:
     int w, h;

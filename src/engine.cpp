@@ -181,12 +181,35 @@ void FluidEngine::setVelocityDissipation(float dissipation) {
     velocityDissipation = dissipation;
 }
 
-void FluidEngine::applyDimensionalBrush(int x, int y, int radius, int mode, float strength, float falloffParam) {
-    int r2 = radius * radius;
+void FluidEngine::applyDimensionalBrush(int x, int y, int radius, int mode, float strength, float falloffParam, float angle, float aspectRatio, int shape, int falloffMode) {
+    float rad = (float)radius;
+    float angRad = angle * 3.14159265f / 180.0f;
+    float cosA = std::cos(angRad);
+    float sinA = std::sin(angRad);
+    float aspect = std::max(0.01f, aspectRatio);
+
     for (int dy = -radius; dy <= radius; ++dy) {
         for (int dx = -radius; dx <= radius; ++dx) {
-            int d2 = dx * dx + dy * dy;
-            if (d2 > r2) continue;
+            
+            float px = (float)dx;
+            float py = (float)dy;
+
+            float rx = px * cosA - py * sinA;
+            float ry = px * sinA + py * cosA;
+
+            ry /= aspect;
+
+            float dist = 0.0f;
+            if (shape == 0) { 
+                dist = std::sqrt(rx * rx + ry * ry);
+            } else if (shape == 1) { 
+                dist = std::max(std::abs(rx), std::abs(ry));
+            } else if (shape == 2) { 
+                dist = (std::abs(rx) + std::abs(ry)); 
+                if (shape == 2) dist *= 0.7071f; 
+            }
+
+            if (dist > rad) continue;
 
             int nx = x + dx;
             int ny = y + dy;
@@ -196,29 +219,34 @@ void FluidEngine::applyDimensionalBrush(int x, int y, int radius, int mode, floa
             int idx = ny * w + nx;
             if (barriers[idx]) continue;
 
-            float dist = std::sqrt((float)d2);
-            float normDist = (radius > 0) ? dist / (float)radius : 0.0f;
-            float t = 1.0f - normDist;
-            if (t < 0.0f) t = 0.0f;
-            float smoothT = t * t * (3.0f - 2.0f * t);
-            float weight = (1.0f - falloffParam) + falloffParam * smoothT;
+            float weight = 0.0f;
+            float normDist = dist / rad;
+            
+            if (falloffMode == 1) { 
+                weight = std::exp(-normDist * normDist * falloffParam);
+            } else { 
+                float t = 1.0f - normDist;
+                if (t < 0.0f) t = 0.0f;
+                float smoothT = t * t * (3.0f - 2.0f * t);
+                weight = (1.0f - falloffParam) + falloffParam * smoothT;
+            }
 
-            if (mode == 0) { // Vortex
+            if (mode == 0) { 
                 float fx = -dy * strength * weight;
                 float fy = dx * strength * weight;
                 ux[idx] += fx * dt;
                 uy[idx] += fy * dt;
-            } else if (mode == 1) { // Divergence (Expansion/Contraction)
+            } else if (mode == 1) { 
                 float fx = dx * strength * weight;
                 float fy = dy * strength * weight;
                 ux[idx] += fx * dt;
                 uy[idx] += fy * dt;
-            } else if (mode == 2) { // Noise
+            } else if (mode == 2) { 
                 float randX = ((float)rand() / (float)RAND_MAX - 0.5f) * 2.0f;
                 float randY = ((float)rand() / (float)RAND_MAX - 0.5f) * 2.0f;
                 ux[idx] += randX * strength * weight * dt;
                 uy[idx] += randY * strength * weight * dt;
-            } else if (mode == 3) { // Drag (Dampen)
+            } else if (mode == 3) { 
                 float dampen = 1.0f - (strength * weight * dt);
                 if (dampen < 0.0f) dampen = 0.0f;
                 ux[idx] *= dampen;
@@ -234,14 +262,37 @@ void FluidEngine::applyDimensionalBrush(int x, int y, int radius, int mode, floa
     }
 }
 
-void FluidEngine::applyGenericBrush(int x, int y, int radius, float fx, float fy, float densityAmt, float tempAmt, float falloffParam) {
-    int r2 = radius * radius;
+void FluidEngine::applyGenericBrush(int x, int y, int radius, float fx, float fy, float densityAmt, float tempAmt, float falloffParam, float angle, float aspectRatio, int shape, int falloffMode) {
+    float rad = (float)radius;
     bool applyForce = (std::abs(fx) > 1e-5f || std::abs(fy) > 1e-5f);
+    
+    float angRad = angle * 3.14159265f / 180.0f;
+    float cosA = std::cos(angRad);
+    float sinA = std::sin(angRad);
+    float aspect = std::max(0.01f, aspectRatio);
 
     for (int dy = -radius; dy <= radius; ++dy) {
         for (int dx = -radius; dx <= radius; ++dx) {
-            int d2 = dx * dx + dy * dy;
-            if (d2 > r2) continue;
+            
+            float px = (float)dx;
+            float py = (float)dy;
+
+            float rx = px * cosA - py * sinA;
+            float ry = px * sinA + py * cosA;
+
+            ry /= aspect;
+
+            float dist = 0.0f;
+            if (shape == 0) { 
+                dist = std::sqrt(rx * rx + ry * ry);
+            } else if (shape == 1) { 
+                dist = std::max(std::abs(rx), std::abs(ry));
+            } else if (shape == 2) { 
+                dist = (std::abs(rx) + std::abs(ry)); 
+                if (shape == 2) dist *= 0.7071f;
+            }
+
+            if (dist > rad) continue;
 
             int nx = x + dx;
             int ny = y + dy;
@@ -251,12 +302,17 @@ void FluidEngine::applyGenericBrush(int x, int y, int radius, float fx, float fy
             int idx = ny * w + nx;
             if (barriers[idx]) continue;
 
-            float dist = std::sqrt((float)d2);
-            float normDist = (radius > 0) ? dist / (float)radius : 0.0f;
-            float t = 1.0f - normDist;
-            if (t < 0.0f) t = 0.0f;
-            float smoothT = t * t * (3.0f - 2.0f * t);
-            float weight = (1.0f - falloffParam) + falloffParam * smoothT;
+            float weight = 0.0f;
+            float normDist = dist / rad;
+
+            if (falloffMode == 1) {
+                weight = std::exp(-normDist * normDist * falloffParam);
+            } else {
+                float t = 1.0f - normDist;
+                if (t < 0.0f) t = 0.0f;
+                float smoothT = t * t * (3.0f - 2.0f * t);
+                weight = (1.0f - falloffParam) + falloffParam * smoothT;
+            }
 
             if (applyForce) {
                 ux[idx] += fx * weight * dt;

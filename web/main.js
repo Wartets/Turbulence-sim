@@ -59,6 +59,11 @@ createFluidEngine().then(Module => {
             type: 'combined',
             size: 10,
             falloff: 0.26,
+            gaussianFalloff: 2.0,
+            shape: 'Circle',
+            falloffType: 'Smooth',
+            angle: 0.0,
+            aspectRatio: 1.0,
             vortexDirection: 1,
             erase: false,
             velocityStrength: 1.7,
@@ -176,6 +181,10 @@ createFluidEngine().then(Module => {
     const inputFolder = gui.addFolder('Interaction');
     const brushTypeController = inputFolder.add(params.brush, 'type', ['none', 'combined', 'velocity', 'density', 'temperature', 'vortex', 'expansion', 'noise', 'drag', 'obstacle']).name('Brush Mode');
     inputFolder.add(params.brush, 'size', 1, 100).name('Radius');
+    inputFolder.add(params.brush, 'shape', ['Circle', 'Square', 'Diamond']).name('Shape');
+    const falloffTypeController = inputFolder.add(params.brush, 'falloffType', ['Smooth', 'Gaussian']).name('Falloff Type');
+    inputFolder.add(params.brush, 'angle', 0, 360).name('Angle (Deg)');
+    inputFolder.add(params.brush, 'aspectRatio', 0.1, 4.0).name('Aspect Ratio');
     const velocityStrengthController = inputFolder.add(params.brush, 'velocityStrength', 0.01, 10.0).name('Velocity Strength').step(0.01);
     const densityStrengthController = inputFolder.add(params.brush, 'densityStrength', 0.01, 10.0).name('Density Strength').step(0.01);
     const temperatureStrengthController = inputFolder.add(params.brush, 'temperatureStrength', 0.01, 20.0).name('Temperature Strength').step(0.01);
@@ -184,11 +193,13 @@ createFluidEngine().then(Module => {
     const dragStrengthController = inputFolder.add(params.brush, 'dragStrength', 0.0, 1.0).name('Drag Factor').step(0.01);
     
     const falloffController = inputFolder.add(params.brush, 'falloff', 0, 1).name('Edge Falloff').step(0.01);
+    const gaussianFalloffController = inputFolder.add(params.brush, 'gaussianFalloff', 0.1, 100.0).name('Gaussian Falloff').step(0.1);
     const eraseController = inputFolder.add(params.brush, 'erase').name('Eraser');
     const vortexController = inputFolder.add(params.brush, 'vortexDirection', { 'Counter-Clockwise': 1, 'Clockwise': -1 }).name('Vortex Direction');
 
     const updateBrushUI = () => {
         const type = params.brush.type;
+        const falloffType = params.brush.falloffType;
 
         const isNone = type === 'none';
         const isObstacle = type === 'obstacle';
@@ -212,7 +223,10 @@ createFluidEngine().then(Module => {
         expansionStrengthController.show(!isNone && isExpansion);
         dragStrengthController.show(!isNone && isDrag);
 
-        falloffController.show(!isNone && !isObstacle);
+        const isGaussian = falloffType === 'Gaussian';
+        falloffController.show(!isNone && !isObstacle && !isGaussian);
+        gaussianFalloffController.show(!isNone && !isObstacle && isGaussian);
+
         vortexController.show(!isNone && isVortex);
         eraseController.show(!isNone);
 
@@ -223,6 +237,7 @@ createFluidEngine().then(Module => {
         }
     };
     brushTypeController.onChange(updateBrushUI);
+    falloffTypeController.onChange(updateBrushUI);
 
     let simWidth, simHeight;
 
@@ -307,7 +322,14 @@ createFluidEngine().then(Module => {
 
         const brush = params.brush;
         const radius = Math.round(brush.size);
-
+        
+        let shapeInt = 0;
+        if (brush.shape === 'Square') shapeInt = 1;
+        if (brush.shape === 'Diamond') shapeInt = 2;
+        
+        let falloffInt = (brush.falloffType === 'Gaussian') ? 1 : 0;
+        let currentFalloff = (brush.falloffType === 'Gaussian') ? brush.gaussianFalloff : brush.falloff;
+        
         for (let i = 0; i < steps; i++) {
             const t = (i + 1) / steps;
             
@@ -322,13 +344,13 @@ createFluidEngine().then(Module => {
                 } else {
                     if (brush.type === 'vortex') {
                         const str = brush.velocityStrength * brush.vortexDirection;
-                        engine.applyDimensionalBrush(simX, simY, radius, 0, str, brush.falloff);
+                        engine.applyDimensionalBrush(simX, simY, radius, 0, str, currentFalloff, brush.angle, brush.aspectRatio, shapeInt, falloffInt);
                     } else if (brush.type === 'expansion') {
-                        engine.applyDimensionalBrush(simX, simY, radius, 1, brush.expansionStrength, brush.falloff);
+                        engine.applyDimensionalBrush(simX, simY, radius, 1, brush.expansionStrength, currentFalloff, brush.angle, brush.aspectRatio, shapeInt, falloffInt);
                     } else if (brush.type === 'noise') {
-                        engine.applyDimensionalBrush(simX, simY, radius, 2, brush.noiseStrength, brush.falloff);
+                        engine.applyDimensionalBrush(simX, simY, radius, 2, brush.noiseStrength, currentFalloff, brush.angle, brush.aspectRatio, shapeInt, falloffInt);
                     } else if (brush.type === 'drag') {
-                        engine.applyDimensionalBrush(simX, simY, radius, 3, brush.dragStrength, brush.falloff);
+                        engine.applyDimensionalBrush(simX, simY, radius, 3, brush.dragStrength, currentFalloff, brush.angle, brush.aspectRatio, shapeInt, falloffInt);
                     }
 
                     const paintVelocity = (brush.type === 'velocity' || brush.type === 'combined');
@@ -354,7 +376,7 @@ createFluidEngine().then(Module => {
                         }
 
                         if (fx !== 0 || fy !== 0 || dAmt !== 0 || tAmt !== 0) {
-                            engine.applyGenericBrush(simX, simY, radius, fx, fy, dAmt, tAmt, brush.falloff);
+                            engine.applyGenericBrush(simX, simY, radius, fx, fy, dAmt, tAmt, currentFalloff, brush.angle, brush.aspectRatio, shapeInt, falloffInt);
                         }
                     }
                 }
@@ -451,7 +473,12 @@ createFluidEngine().then(Module => {
             const brush = params.brush;
             const canvasRadius = (brush.size / simWidth) * canvas.width;
             const color = brush.erase ? [1.0, 0.2, 0.2, 0.7] : [1.0, 1.0, 1.0, 0.7];
-            renderer.drawBrush(mouse.x, mouse.y, canvasRadius, color);
+            
+            let shapeInt = 0;
+            if (brush.shape === 'Square') shapeInt = 1;
+            if (brush.shape === 'Diamond') shapeInt = 2;
+
+            renderer.drawBrush(mouse.x, mouse.y, canvasRadius, color, brush.angle, brush.aspectRatio, shapeInt);
         }
 
         const currentTime = performance.now();

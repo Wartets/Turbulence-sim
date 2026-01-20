@@ -234,6 +234,53 @@ void FluidEngine::applyDimensionalBrush(int x, int y, int radius, int mode, floa
     }
 }
 
+void FluidEngine::applyGenericBrush(int x, int y, int radius, float fx, float fy, float densityAmt, float tempAmt, float falloffParam) {
+    int r2 = radius * radius;
+    bool applyForce = (std::abs(fx) > 1e-5f || std::abs(fy) > 1e-5f);
+
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            int d2 = dx * dx + dy * dy;
+            if (d2 > r2) continue;
+
+            int nx = x + dx;
+            int ny = y + dy;
+
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+
+            int idx = ny * w + nx;
+            if (barriers[idx]) continue;
+
+            float dist = std::sqrt((float)d2);
+            float normDist = (radius > 0) ? dist / (float)radius : 0.0f;
+            float t = 1.0f - normDist;
+            if (t < 0.0f) t = 0.0f;
+            float smoothT = t * t * (3.0f - 2.0f * t);
+            float weight = (1.0f - falloffParam) + falloffParam * smoothT;
+
+            if (applyForce) {
+                ux[idx] += fx * weight * dt;
+                uy[idx] += fy * weight * dt;
+                limitVelocity(ux[idx], uy[idx]);
+            }
+
+            if (densityAmt != 0.0f) {
+                dye[idx] += densityAmt * weight;
+            }
+            
+            if (tempAmt != 0.0f) {
+                temperature[idx] += tempAmt * weight;
+            }
+            
+            if (applyForce) {
+                 float feq[9];
+                 equilibrium(rho[idx], ux[idx], uy[idx], feq);
+                 for(int k=0; k<9; k++) f[k][idx] = feq[k];
+            }
+        }
+    }
+}
+
 void FluidEngine::addTemperature(int x, int y, float amount) {
     if (x < 0 || x >= w || y < 0 || y >= h) return;
     int idx = y * w + x;
@@ -678,6 +725,7 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("clearRegion", &FluidEngine::clearRegion)
         .function("addObstacle", &FluidEngine::addObstacle)
         .function("applyDimensionalBrush", &FluidEngine::applyDimensionalBrush)
+        .function("applyGenericBrush", &FluidEngine::applyGenericBrush)
         .function("getDensityView", &FluidEngine::getDensityView)
         .function("getVelocityXView", &FluidEngine::getVelocityXView)
         .function("getVelocityYView", &FluidEngine::getVelocityYView)

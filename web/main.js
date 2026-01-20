@@ -44,7 +44,7 @@ createFluidEngine().then(Module => {
             power: 1.0,
             obstacleColor: '#4d4d4d',
             backgroundColor: '#00020A',
-            vorticityBipolar: true,
+            vorticityBipolar: false,
         },
         
         particles: {
@@ -285,75 +285,76 @@ createFluidEngine().then(Module => {
         if (params.brush.type === 'none') return;
 
         const rect = canvas.getBoundingClientRect();
-        
-        const mx = clientX - rect.left;
-        const my = clientY - rect.top;
 
-        const simX = Math.floor((mx / canvas.width) * simWidth);
-        const simY = Math.floor(((canvas.height - my) / canvas.height) * simHeight);
-        
+        const toSimCoords = (cx, cy) => {
+            const mx = cx - rect.left;
+            const my = cy - rect.top;
+            return {
+                x: Math.min(simWidth - 1, Math.max(0, Math.floor((mx / canvas.width) * simWidth))),
+                y: Math.min(simHeight - 1, Math.max(0, Math.floor(((canvas.height - my) / canvas.height) * simHeight)))
+            };
+        };
+
+        const currentPos = toSimCoords(clientX, clientY);
+        const prevPos = toSimCoords(mouse.lastClientX, mouse.lastClientY);
+
         const dx = (clientX - mouse.lastClientX);
         const dy = -(clientY - mouse.lastClientY); 
 
+        const dist = Math.hypot(currentPos.x - prevPos.x, currentPos.y - prevPos.y);
+        
+        const steps = Math.ceil(dist) || 1;
+
         const brush = params.brush;
-        const radius = brush.size;
+        const radius = Math.round(brush.size);
 
-        if (brush.type === 'obstacle') {
-             engine.addObstacle(simX, simY, Math.round(radius), brush.erase);
-        } else {
-            if (brush.erase) {
-                engine.clearRegion(simX, simY, Math.round(radius));
+        for (let i = 0; i < steps; i++) {
+            const t = (i + 1) / steps;
+            
+            const simX = Math.round(prevPos.x + (currentPos.x - prevPos.x) * t);
+            const simY = Math.round(prevPos.y + (currentPos.y - prevPos.y) * t);
+
+            if (brush.type === 'obstacle') {
+                 engine.addObstacle(simX, simY, radius, brush.erase);
             } else {
-                
-                if (brush.type === 'vortex') {
-                    const str = brush.velocityStrength * brush.vortexDirection;
-                    engine.applyDimensionalBrush(simX, simY, Math.round(radius), 0, str, brush.falloff);
-                } else if (brush.type === 'expansion') {
-                    engine.applyDimensionalBrush(simX, simY, Math.round(radius), 1, brush.expansionStrength, brush.falloff);
-                } else if (brush.type === 'noise') {
-                    engine.applyDimensionalBrush(simX, simY, Math.round(radius), 2, brush.noiseStrength, brush.falloff);
-                } else if (brush.type === 'drag') {
-                    engine.applyDimensionalBrush(simX, simY, Math.round(radius), 3, brush.dragStrength, brush.falloff);
-                }
+                if (brush.erase) {
+                    engine.clearRegion(simX, simY, radius);
+                } else {
+                    if (brush.type === 'vortex') {
+                        const str = brush.velocityStrength * brush.vortexDirection;
+                        engine.applyDimensionalBrush(simX, simY, radius, 0, str, brush.falloff);
+                    } else if (brush.type === 'expansion') {
+                        engine.applyDimensionalBrush(simX, simY, radius, 1, brush.expansionStrength, brush.falloff);
+                    } else if (brush.type === 'noise') {
+                        engine.applyDimensionalBrush(simX, simY, radius, 2, brush.noiseStrength, brush.falloff);
+                    } else if (brush.type === 'drag') {
+                        engine.applyDimensionalBrush(simX, simY, radius, 3, brush.dragStrength, brush.falloff);
+                    }
 
-                const paintVelocity = (brush.type === 'velocity' || brush.type === 'combined');
-                const paintDensity = (brush.type === 'density' || brush.type === 'combined');
-                const paintTemperature = (brush.type === 'temperature' || brush.type === 'combined');
+                    const paintVelocity = (brush.type === 'velocity' || brush.type === 'combined');
+                    const paintDensity = (brush.type === 'density' || brush.type === 'combined');
+                    const paintTemperature = (brush.type === 'temperature' || brush.type === 'combined');
 
-                if (paintVelocity || paintDensity || paintTemperature) {
-                    const intRadius = Math.round(radius);
-                    for(let ry = -intRadius; ry <= intRadius; ry++) {
-                        for(let rx = -intRadius; rx <= intRadius; rx++) {
-                            const distSq = rx*rx + ry*ry;
-                            if(distSq > radius*radius) continue;
-                            
-                            const cx = Math.max(0, Math.min(simWidth - 1, simX + rx));
-                            const cy = Math.max(0, Math.min(simHeight - 1, simY + ry));
+                    if (paintVelocity || paintDensity || paintTemperature) {
+                        let fx = 0, fy = 0, dAmt = 0, tAmt = 0;
 
-                            let falloff = 1.0;
-                            if (radius > 0.0) {
-                                const dist = Math.sqrt(distSq);
-                                const t = 1.0 - Math.min(dist / radius, 1.0);
-                                const smoothT = t * t * (3.0 - 2.0 * t);
-                                falloff = (1.0 - brush.falloff) + brush.falloff * smoothT;
+                        if (paintVelocity) {
+                            if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
+                                fx = dx * 0.5 * brush.velocityStrength;
+                                fy = dy * 0.5 * brush.velocityStrength;
                             }
+                        }
+                        
+                        if (paintDensity) {
+                            dAmt = 0.5 * brush.densityStrength;
+                        }
 
-                            if (paintVelocity) {
-                                if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
-                                    const strength = params.brush.velocityStrength * falloff;
-                                    engine.addForce(cx, cy, dx * 0.5 * strength, dy * 0.5 * strength);
-                                }
-                            } 
-                            
-                            if (paintDensity) {
-                                const strength = params.brush.densityStrength * falloff;
-                                engine.addDensity(cx, cy, 0.5 * strength);
-                            }
+                        if (paintTemperature) {
+                            tAmt = 1.0 * brush.temperatureStrength;
+                        }
 
-                            if (paintTemperature) {
-                                const strength = params.brush.temperatureStrength * falloff;
-                                engine.addTemperature(cx, cy, 1.0 * strength);
-                            }
+                        if (fx !== 0 || fy !== 0 || dAmt !== 0 || tAmt !== 0) {
+                            engine.applyGenericBrush(simX, simY, radius, fx, fy, dAmt, tAmt, brush.falloff);
                         }
                     }
                 }

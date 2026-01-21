@@ -487,314 +487,223 @@ void FluidEngine::collideAndStream() {
         float feq_rest[9];
         equilibrium(1.0f, 0.0f, 0.0f, feq_rest);
 
+        auto process_scalar = [&](int x, int y) {
+            int idx = y * w + x;
+            if (barriers[idx]) {
+                rho[idx] = 1.0f;
+                ux[idx] = 0.0f;
+                uy[idx] = 0.0f;
+                for(int k=0; k<9; ++k) f_new[k][idx] = feq_rest[k];
+                return;
+            }
+
+            float r = 0.0f, u_val = 0.0f, v_val = 0.0f;
+            for (int k = 0; k < 9; ++k) {
+                float f_val = f[k][idx];
+                r += f_val;
+                u_val += f_val * cx[k];
+                v_val += f_val * cy[k];
+            }
+            if (r > 0) { u_val /= r; v_val /= r; }
+            rho[idx] = r;
+
+            float fx = gravityX + forceX[idx];
+            float fy = gravityY + buoyancy * temperature[idx] + forceY[idx];
+            float u_eq = u_val + fx * dt;
+            float v_eq = v_val + fy * dt;
+            if (velocityDissipation > 0.0f) {
+                float damp = 1.0f - velocityDissipation;
+                if (damp < 0.0f) damp = 0.0f;
+                u_eq *= damp;
+                v_eq *= damp;
+            }
+            limitVelocity(u_eq, v_eq);
+            ux[idx] = u_eq;
+            uy[idx] = v_eq;
+
+            float feq[9];
+            equilibrium(r, u_eq, v_eq, feq);
+
+            for (int k = 0; k < 9; ++k) {
+                float f_out = f[k][idx] * (1.0f - omega) + feq[k] * omega;
+                int nx = x + cx[k];
+                int ny = y + cy[k];
+                int dest_k = k;
+                bool bounce = false;
+                int dest_x = nx;
+                int dest_y = ny;
+
+                switch(boundaryType) {
+                    case 0: dest_x = (nx + w) % w; dest_y = (ny + h) % h; break;
+                    case 1: if (nx < 0 || nx >= w || ny < 0 || ny >= h) { bounce = true; dest_k = opp[k]; dest_x = x; dest_y = y; } break;
+                    case 2: dest_x = (nx + w) % w; if (ny < 0 || ny >= h) { bounce = true; dest_k = opp[k]; dest_x = x; dest_y = y; } break;
+                    case 3: dest_y = (ny + h) % h; if (nx < 0 || nx >= w) { bounce = true; dest_k = opp[k]; dest_x = x; dest_y = y; } break;
+                    case 4: 
+                        if (nx < 0 || nx >= w) { bounce = true; dest_k = slip_v[k]; dest_x = x; dest_y = y; } 
+                        else if (ny < 0 || ny >= h) { bounce = true; dest_k = slip_h[k]; dest_x = x; dest_y = y; } 
+                        break;
+                    case 5: 
+                        dest_x = (nx + w) % w; 
+                        if (ny < 0 || ny >= h) { bounce = true; dest_k = slip_h[k]; dest_x = x; dest_y = y; } 
+                        break;
+                }
+
+                if (bounce) {
+                    f_new[dest_k][idx] = f_out;
+                } else {
+                    int n_idx = dest_y * w + dest_x;
+                    if (barriers[n_idx]) f_new[opp[k]][idx] = f_out;
+                    else f_new[dest_k][n_idx] = f_out;
+                }
+            }
+        };
+
         for (int y = startY; y < endY; ++y) {
-            int x = 0;
-            int simd_width = w - (w % 4);
+            bool boundaryRow = (y == 0 || y == h - 1);
+            if (boundaryRow) {
+                for (int x = 0; x < w; ++x) process_scalar(x, y);
+            } else {
+                process_scalar(0, y);
 
-            for (; x < simd_width; x += 4) {
-                int idx = y * w + x;
+                int x = 1;
+                int simd_end = w - 1; 
+                int vec_limit = simd_end - ((simd_end - x) % 4);
 
-                v128_t v_f[9];
-                for(int k=0; k<9; ++k) {
-                    v_f[k] = wasm_v128_load(&f[k][idx]);
-                }
-
-                v128_t v_rho = v_f[0];
-                for(int k=1; k<9; ++k) {
-                    v_rho = wasm_f32x4_add(v_rho, v_f[k]);
-                }
-
-                v128_t v_ux = wasm_f32x4_mul(v_f[1], v_cx[1]);
-                v128_t v_uy = wasm_f32x4_mul(v_f[1], v_cy[1]);
-                
-                v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[3], v_cx[3]));
-                v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[5], v_cx[5]));
-                v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[6], v_cx[6]));
-                v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[7], v_cx[7]));
-                v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[8], v_cx[8]));
-
-                v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[2], v_cy[2]));
-                v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[4], v_cy[4]));
-                v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[5], v_cy[5]));
-                v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[6], v_cy[6]));
-                v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[7], v_cy[7]));
-                v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[8], v_cy[8]));
-
-                v128_t v_rho_inv = wasm_f32x4_div(v_one, wasm_f32x4_max(v_rho, wasm_f32x4_splat(1e-6f)));
-                v_ux = wasm_f32x4_mul(v_ux, v_rho_inv);
-                v_uy = wasm_f32x4_mul(v_uy, v_rho_inv);
-
-                v128_t v_forceX = wasm_v128_load(&forceX[idx]);
-                v128_t v_forceY = wasm_v128_load(&forceY[idx]);
-                v128_t v_temp = wasm_v128_load(&temperature[idx]);
-
-                v128_t v_fx = wasm_f32x4_add(v_gravityX, v_forceX);
-                v128_t v_fy = wasm_f32x4_add(v_gravityY, wasm_f32x4_add(wasm_f32x4_mul(v_buoyancy, v_temp), v_forceY));
-
-                v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_fx, v_dt));
-                v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_fy, v_dt));
-
-                if (velocityDissipation > 0.0f) {
-                    v_ux = wasm_f32x4_mul(v_ux, v_dissipation);
-                    v_uy = wasm_f32x4_mul(v_uy, v_dissipation);
-                }
-
-                v128_t v_speed = wasm_f32x4_sqrt(wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy)));
-                v128_t v_mask = wasm_f32x4_gt(v_speed, v_maxVel);
-                if (wasm_v128_any_true(v_mask)) {
-                   v128_t v_ratio = wasm_f32x4_div(v_maxVel, v_speed);
-                   v_ux = wasm_v128_bitselect(wasm_f32x4_mul(v_ux, v_ratio), v_ux, v_mask);
-                   v_uy = wasm_v128_bitselect(wasm_f32x4_mul(v_uy, v_ratio), v_uy, v_mask);
-                }
-
-                wasm_v128_store(&rho[idx], v_rho);
-                wasm_v128_store(&ux[idx], v_ux);
-                wasm_v128_store(&uy[idx], v_uy);
-
-                v128_t v_u2 = wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy));
-                v128_t v_usq_term = wasm_f32x4_mul(v_u2, v_one_point_five);
-
-                v128_t v_f_out[9];
-
-                for (int k = 0; k < 9; ++k) {
-                    v128_t v_eu = wasm_f32x4_add(wasm_f32x4_mul(v_cx[k], v_ux), wasm_f32x4_mul(v_cy[k], v_uy));
-                    v128_t v_feq = wasm_f32x4_mul(v_weights[k], v_rho);
+                for (; x < vec_limit; x += 4) {
+                    int idx = y * w + x;
                     
-                    v128_t v_term = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_eu, v_three));
-                    v_term = wasm_f32x4_add(v_term, wasm_f32x4_sub(wasm_f32x4_mul(wasm_f32x4_mul(v_eu, v_eu), v_four_point_five), v_usq_term));
-                    v_feq = wasm_f32x4_mul(v_feq, v_term);
-                    
-                    v_f_out[k] = wasm_f32x4_add(wasm_f32x4_mul(v_f[k], v_one_minus_omega), wasm_f32x4_mul(v_feq, v_omega));
-                }
+                    v128_t v_f[9];
+                    for(int k=0; k<9; ++k) v_f[k] = wasm_v128_load(&f[k][idx]);
 
-                float f_out_batch[9][4];
-                for(int k=0; k<9; ++k) {
-                    wasm_v128_store((v128_t*)f_out_batch[k], v_f_out[k]);
-                }
+                    v128_t v_rho = v_f[0];
+                    for(int k=1; k<9; ++k) v_rho = wasm_f32x4_add(v_rho, v_f[k]);
 
-                for (int lane = 0; lane < 4; ++lane) {
-                    int curr_x = x + lane;
-                    int curr_idx = idx + lane;
-                    
-                    if (barriers[curr_idx]) {
-                        rho[curr_idx] = 1.0f;
-                        ux[curr_idx] = 0.0f;
-                        uy[curr_idx] = 0.0f;
-                        for(int k=0; k<9; ++k) f_new[k][curr_idx] = feq_rest[k];
-                        continue;
+                    v128_t v_ux = wasm_f32x4_mul(v_f[1], v_cx[1]);
+                    v128_t v_uy = wasm_f32x4_mul(v_f[1], v_cy[1]);
+                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[3], v_cx[3]));
+                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[5], v_cx[5]));
+                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[6], v_cx[6]));
+                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[7], v_cx[7]));
+                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[8], v_cx[8]));
+                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[2], v_cy[2]));
+                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[4], v_cy[4]));
+                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[5], v_cy[5]));
+                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[6], v_cy[6]));
+                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[7], v_cy[7]));
+                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[8], v_cy[8]));
+
+                    v128_t v_rho_inv = wasm_f32x4_div(v_one, wasm_f32x4_max(v_rho, wasm_f32x4_splat(1e-6f)));
+                    v_ux = wasm_f32x4_mul(v_ux, v_rho_inv);
+                    v_uy = wasm_f32x4_mul(v_uy, v_rho_inv);
+
+                    v128_t v_forceX = wasm_v128_load(&forceX[idx]);
+                    v128_t v_forceY = wasm_v128_load(&forceY[idx]);
+                    v128_t v_temp = wasm_v128_load(&temperature[idx]);
+
+                    v128_t v_fx = wasm_f32x4_add(v_gravityX, v_forceX);
+                    v128_t v_fy = wasm_f32x4_add(v_gravityY, wasm_f32x4_add(wasm_f32x4_mul(v_buoyancy, v_temp), v_forceY));
+
+                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_fx, v_dt));
+                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_fy, v_dt));
+
+                    if (velocityDissipation > 0.0f) {
+                        v_ux = wasm_f32x4_mul(v_ux, v_dissipation);
+                        v_uy = wasm_f32x4_mul(v_uy, v_dissipation);
                     }
 
-                    for (int k = 0; k < 9; ++k) {
-                        float val = f_out_batch[k][lane];
-                        
-                        int nx = curr_x + cx[k];
-                        int ny = y + cy[k];
-                        
-                        int dest_x = nx;
-                        int dest_y = ny;
-                        int dest_k = k;
-                        bool bounce = false;
+                    v128_t v_speed = wasm_f32x4_sqrt(wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy)));
+                    v128_t v_mask = wasm_f32x4_gt(v_speed, v_maxVel);
+                    if (wasm_v128_any_true(v_mask)) {
+                        v128_t v_ratio = wasm_f32x4_div(v_maxVel, v_speed);
+                        v_ux = wasm_v128_bitselect(wasm_f32x4_mul(v_ux, v_ratio), v_ux, v_mask);
+                        v_uy = wasm_v128_bitselect(wasm_f32x4_mul(v_uy, v_ratio), v_uy, v_mask);
+                    }
 
-                        switch(boundaryType) {
-                            case 0: 
-                                dest_x = (nx + w) % w;
-                                dest_y = (ny + h) % h;
-                                break;
-                            case 1: 
-                                if (nx < 0 || nx >= w || ny < 0 || ny >= h) {
-                                    bounce = true;
-                                    dest_k = opp[k];
-                                    dest_x = curr_x;
-                                    dest_y = y;
-                                }
-                                break;
-                            case 2: 
-                                dest_x = (nx + w) % w;
-                                if (ny < 0 || ny >= h) {
-                                    bounce = true;
-                                    dest_k = opp[k];
-                                    dest_x = curr_x;
-                                    dest_y = y;
-                                }
-                                break;
-                            case 3: 
-                                dest_y = (ny + h) % h;
-                                if (nx < 0 || nx >= w) {
-                                    bounce = true;
-                                    dest_k = opp[k];
-                                    dest_x = curr_x;
-                                    dest_y = y;
-                                }
-                                break;
-                            case 4: 
-                                if (nx < 0 || nx >= w) {
-                                    bounce = true;
-                                    dest_k = slip_v[k]; 
-                                    dest_x = curr_x;
-                                    dest_y = y;
-                                } else if (ny < 0 || ny >= h) {
-                                    bounce = true;
-                                    dest_k = slip_h[k]; 
-                                    dest_x = curr_x;
-                                    dest_y = y;
-                                }
-                                break;
-                            case 5: 
-                                dest_x = (nx + w) % w;
-                                 if (ny < 0 || ny >= h) {
-                                    bounce = true;
-                                    dest_k = slip_h[k]; 
-                                    dest_x = curr_x;
-                                    dest_y = y;
-                                }
-                                break;
+                    wasm_v128_store(&rho[idx], v_rho);
+                    wasm_v128_store(&ux[idx], v_ux);
+                    wasm_v128_store(&uy[idx], v_uy);
+
+                    v128_t v_u2 = wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy));
+                    v128_t v_usq_term = wasm_f32x4_mul(v_u2, v_one_point_five);
+                    
+                    v128_t v_f_out[9];
+                    for (int k = 0; k < 9; ++k) {
+                        v128_t v_eu = wasm_f32x4_add(wasm_f32x4_mul(v_cx[k], v_ux), wasm_f32x4_mul(v_cy[k], v_uy));
+                        v128_t v_feq = wasm_f32x4_mul(v_weights[k], v_rho);
+                        v128_t v_term = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_eu, v_three));
+                        v_term = wasm_f32x4_add(v_term, wasm_f32x4_sub(wasm_f32x4_mul(wasm_f32x4_mul(v_eu, v_eu), v_four_point_five), v_usq_term));
+                        v_feq = wasm_f32x4_mul(v_feq, v_term);
+                        v_f_out[k] = wasm_f32x4_add(wasm_f32x4_mul(v_f[k], v_one_minus_omega), wasm_f32x4_mul(v_feq, v_omega));
+                    }
+
+                    float f_out_batch[9][4];
+                    for(int k=0; k<9; ++k) wasm_v128_store((v128_t*)f_out_batch[k], v_f_out[k]);
+
+                    for (int lane = 0; lane < 4; ++lane) {
+                        int curr_x = x + lane;
+                        int curr_idx = idx + lane;
+                        
+                        if (barriers[curr_idx]) {
+                            rho[curr_idx] = 1.0f;
+                            ux[curr_idx] = 0.0f;
+                            uy[curr_idx] = 0.0f;
+                            for(int k=0; k<9; ++k) f_new[k][curr_idx] = feq_rest[k];
+                            continue;
                         }
 
-                        if (bounce) {
-                            f_new[dest_k][curr_idx] = val;
-                        } else {
-                            int n_idx = dest_y * w + dest_x;
+                        for (int k = 0; k < 9; ++k) {
+                            float val = f_out_batch[k][lane];
+                            int n_idx = curr_idx + cx[k] + cy[k] * w;
+                            
                             if (barriers[n_idx]) {
                                 f_new[opp[k]][curr_idx] = val;
                             } else {
-                                f_new[dest_k][n_idx] = val;
+                                f_new[k][n_idx] = val;
                             }
                         }
                     }
                 }
-            }
 
-            for (; x < w; ++x) {
-                int idx = y * w + x;
-                
-                if (barriers[idx]) {
-                    rho[idx] = 1.0f;
-                    ux[idx] = 0.0f;
-                    uy[idx] = 0.0f;
-                    
+                for (; x < simd_end; ++x) {
+                    int idx = y * w + x;
+                    if (barriers[idx]) {
+                        rho[idx] = 1.0f; ux[idx] = 0.0f; uy[idx] = 0.0f;
+                        for(int k=0; k<9; ++k) f_new[k][idx] = feq_rest[k];
+                        continue;
+                    }
+                    float r = 0.0f, u_val = 0.0f, v_val = 0.0f;
+                    for (int k = 0; k < 9; ++k) {
+                        float f_val = f[k][idx];
+                        r += f_val;
+                        u_val += f_val * cx[k];
+                        v_val += f_val * cy[k];
+                    }
+                    if (r > 0) { u_val /= r; v_val /= r; }
+                    rho[idx] = r;
+                    float fx = gravityX + forceX[idx];
+                    float fy = gravityY + buoyancy * temperature[idx] + forceY[idx];
+                    float u_eq = u_val + fx * dt;
+                    float v_eq = v_val + fy * dt;
+                    if (velocityDissipation > 0.0f) {
+                        float damp = 1.0f - velocityDissipation;
+                        if (damp < 0.0f) damp = 0.0f;
+                        u_eq *= damp;
+                        v_eq *= damp;
+                    }
+                    limitVelocity(u_eq, v_eq);
+                    ux[idx] = u_eq;
+                    uy[idx] = v_eq;
                     float feq[9];
-                    equilibrium(1.0f, 0.0f, 0.0f, feq);
-                    for(int k=0; k<9; ++k) {
-                        f_new[k][idx] = feq[k];
-                    }
-                    continue;
-                }
-
-                float r = 0.0f;
-                float u_val = 0.0f;
-                float v_val = 0.0f;
-                
-                for (int k = 0; k < 9; ++k) {
-                    float f_val = f[k][idx];
-                    r += f_val;
-                    u_val += f_val * cx[k];
-                    v_val += f_val * cy[k];
-                }
-                
-                if (r > 0) {
-                    u_val /= r;
-                    v_val /= r;
-                }
-                
-                rho[idx] = r;
-
-                float fx = gravityX + forceX[idx];
-                float fy = gravityY + buoyancy * temperature[idx] + forceY[idx];
-                
-                float u_eq = u_val + fx * dt;
-                float v_eq = v_val + fy * dt;
-                
-                if (velocityDissipation > 0.0f) {
-                    float damp = 1.0f - velocityDissipation;
-                    if (damp < 0.0f) damp = 0.0f;
-                    u_eq *= damp;
-                    v_eq *= damp;
-                }
-
-                limitVelocity(u_eq, v_eq);
-                ux[idx] = u_eq;
-                uy[idx] = v_eq;
-
-                float feq[9];
-                equilibrium(r, u_eq, v_eq, feq);
-
-                for (int k = 0; k < 9; ++k) {
-                    float f_out = f[k][idx] * (1.0f - omega) + feq[k] * omega;
-                    
-                    int nx = x + cx[k];
-                    int ny = y + cy[k];
-                    
-                    int dest_x = nx;
-                    int dest_y = ny;
-                    int dest_k = k;
-                    bool bounce = false;
-
-                    switch(boundaryType) {
-                        case 0: 
-                            dest_x = (nx + w) % w;
-                            dest_y = (ny + h) % h;
-                            break;
-                        case 1: 
-                            if (nx < 0 || nx >= w || ny < 0 || ny >= h) {
-                                bounce = true;
-                                dest_k = opp[k];
-                                dest_x = x;
-                                dest_y = y;
-                            }
-                            break;
-                        case 2: 
-                            dest_x = (nx + w) % w;
-                            if (ny < 0 || ny >= h) {
-                                bounce = true;
-                                dest_k = opp[k];
-                                dest_x = x;
-                                dest_y = y;
-                            }
-                            break;
-                        case 3: 
-                            dest_y = (ny + h) % h;
-                            if (nx < 0 || nx >= w) {
-                                bounce = true;
-                                dest_k = opp[k];
-                                dest_x = x;
-                                dest_y = y;
-                            }
-                            break;
-                        case 4: 
-                            if (nx < 0 || nx >= w) {
-                                bounce = true;
-                                dest_k = slip_v[k]; 
-                                dest_x = x;
-                                dest_y = y;
-                            } else if (ny < 0 || ny >= h) {
-                                bounce = true;
-                                dest_k = slip_h[k]; 
-                                dest_x = x;
-                                dest_y = y;
-                            }
-                            break;
-                        case 5: 
-                            dest_x = (nx + w) % w;
-                             if (ny < 0 || ny >= h) {
-                                bounce = true;
-                                dest_k = slip_h[k]; 
-                                dest_x = x;
-                                dest_y = y;
-                            }
-                            break;
-                    }
-
-                    if (bounce) {
-                        f_new[dest_k][idx] = f_out;
-                    } else {
-                        int n_idx = dest_y * w + dest_x;
-                        if (barriers[n_idx]) {
-                            f_new[opp[k]][idx] = f_out;
-                        } else {
-                            f_new[dest_k][n_idx] = f_out;
-                        }
+                    equilibrium(r, u_eq, v_eq, feq);
+                    for (int k = 0; k < 9; ++k) {
+                        float val = f[k][idx] * (1.0f - omega) + feq[k] * omega;
+                        int n_idx = idx + cx[k] + cy[k] * w;
+                        if (barriers[n_idx]) f_new[opp[k]][idx] = val;
+                        else f_new[k][n_idx] = val;
                     }
                 }
+                
+                process_scalar(w - 1, y);
             }
         }
     });

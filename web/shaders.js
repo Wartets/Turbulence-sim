@@ -15,8 +15,9 @@ void main() {
 const PARTICLE_UPDATE_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_curr_pos;
-uniform sampler2D u_packed1; // RG: Vel, B: Rho, A: Dye
-uniform sampler2D u_packed2; // R: Obstacles, G: Temp
+uniform sampler2D u_ux;
+uniform sampler2D u_uy;
+uniform sampler2D u_obs;
 uniform float u_dt;
 uniform vec2 u_sim_dim;
 uniform float u_seed;
@@ -34,10 +35,11 @@ void main() {
     
     vec2 uv = p / u_sim_dim;
     
-    vec2 vel = texture(u_packed1, uv).xy;
-    float obs = texture(u_packed2, uv).r;
+    float ux = texture(u_ux, uv).r;
+    float uy = texture(u_uy, uv).r;
+    float obs = texture(u_obs, uv).r;
 
-    p += vel * u_dt;
+    p += vec2(ux, uy) * u_dt;
 
     if (p.x < 0.0) p.x += u_sim_dim.x;
     if (p.x >= u_sim_dim.x) p.x -= u_sim_dim.x;
@@ -45,7 +47,7 @@ void main() {
     if (p.y >= u_sim_dim.y) p.y -= u_sim_dim.y;
 
     vec2 newUV = p / u_sim_dim;
-    float newObs = texture(u_packed2, newUV).r;
+    float newObs = texture(u_obs, newUV).r;
 
     bool isDead = (pos.x < -10.0);
     bool hitObstacle = (obs > 0.1) || (newObs > 0.1);
@@ -58,7 +60,7 @@ void main() {
             float ry = rand(vec2(u_seed - float(i)*1.2, float(coord.y) - float(i)*0.4)) * u_sim_dim.y;
             vec2 checkUV = vec2(rx, ry) / u_sim_dim;
             
-            if (texture(u_packed2, checkUV).r < 0.1) {
+            if (texture(u_obs, checkUV).r < 0.1) {
                 p = vec2(rx, ry);
                 found = true;
                 break;
@@ -74,8 +76,12 @@ void main() {
 
 const FS_SOURCE = `#version 300 es
 precision highp float;
-uniform sampler2D u_packed1; // RG: Vel, B: Rho, A: Dye
-uniform sampler2D u_packed2; // R: Obstacles, G: Temp
+uniform sampler2D u_ux;
+uniform sampler2D u_uy;
+uniform sampler2D u_rho;
+uniform sampler2D u_dye;
+uniform sampler2D u_obs;
+uniform sampler2D u_temp;
 
 uniform int u_mode;
 uniform float u_contrast;
@@ -170,15 +176,14 @@ vec3 getPalette(float val, int scheme) {
 }
 
 void main() {
-    float obstacle_val = texture(u_packed2, v_uv).r;
+    float obstacle_val = texture(u_obs, v_uv).r;
     if (obstacle_val > 0.1) {
         outColor = vec4(u_obstacle_color, 1.0);
         return;
     }
 
-    vec4 packed1 = texture(u_packed1, v_uv);
-    float ux = packed1.r;
-    float uy = packed1.g;
+    float ux = texture(u_ux, v_uv).r;
+    float uy = texture(u_uy, v_uv).r;
     
     vec3 color = vec3(0.0);
     float val = 0.0;
@@ -186,13 +191,13 @@ void main() {
 
     if (u_mode == 0) { 
         // Vorticity
-        ivec2 texSize = textureSize(u_packed1, 0);
+        ivec2 texSize = textureSize(u_ux, 0);
         vec2 texelSize = 1.0 / vec2(texSize);
 
-        float uy_r = texture(u_packed1, v_uv + vec2(texelSize.x, 0.0)).g;
-        float uy_l = texture(u_packed1, v_uv - vec2(texelSize.x, 0.0)).g;
-        float ux_t = texture(u_packed1, v_uv + vec2(0.0, texelSize.y)).r;
-        float ux_b = texture(u_packed1, v_uv - vec2(0.0, texelSize.y)).r;
+        float uy_r = texture(u_uy, v_uv + vec2(texelSize.x, 0.0)).r;
+        float uy_l = texture(u_uy, v_uv - vec2(texelSize.x, 0.0)).r;
+        float ux_t = texture(u_ux, v_uv + vec2(0.0, texelSize.y)).r;
+        float ux_b = texture(u_ux, v_uv - vec2(0.0, texelSize.y)).r;
 
         float curl = (uy_r - uy_l) - (ux_t - ux_b);
         curl *= 2.0;
@@ -222,7 +227,7 @@ void main() {
     } 
     else if (u_mode == 2) { 
         // Density/Dye
-        float dye = packed1.a;
+        float dye = texture(u_dye, v_uv).r;
         val = max(0.0, dye - u_bias) * u_contrast;
         val = pow(max(0.0, val), u_power);
         activity = val;
@@ -230,7 +235,7 @@ void main() {
     }
     else if (u_mode == 3) {
         // Temperature
-        float temp = texture(u_packed2, v_uv).g;
+        float temp = texture(u_temp, v_uv).r;
         float normT = temp * 0.1;
         
         if (u_vorticity_bipolar) {

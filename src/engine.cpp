@@ -32,9 +32,6 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     temperature.resize(size, 0.0f);
     temperature_new.resize(size, 0.0f);
     
-    packedData1.resize(size * 4, 0.0f);
-    packedData2.resize(size * 4, 0.0f);
-    
     forceX.resize(size, 0.0f);
     forceY.resize(size, 0.0f);
     curl.resize(size, 0.0f);
@@ -44,36 +41,6 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     for (int k = 0; k < 9; ++k) {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
-}
-
-void FluidEngine::packData() {
-    parallel_for(0, h, [&](int startY, int endY) {
-        for (int y = startY; y < endY; ++y) {
-            int rowOffset = y * w;
-            for (int x = 0; x < w; ++x) {
-                int idx = rowOffset + x;
-                int pIdx = idx * 4;
-                
-                packedData1[pIdx + 0] = ux[idx];
-                packedData1[pIdx + 1] = uy[idx];
-                packedData1[pIdx + 2] = rho[idx];
-                packedData1[pIdx + 3] = dye[idx];
-                
-                packedData2[pIdx + 0] = (barriers[idx] > 0) ? 1.0f : 0.0f;
-                packedData2[pIdx + 1] = temperature[idx];
-                packedData2[pIdx + 2] = 0.0f;
-                packedData2[pIdx + 3] = 0.0f;
-            }
-        }
-    });
-}
-
-val FluidEngine::getPackedData1View() {
-    return val(typed_memory_view(packedData1.size(), packedData1.data()));
-}
-
-val FluidEngine::getPackedData2View() {
-    return val(typed_memory_view(packedData2.size(), packedData2.data()));
 }
 
 FluidEngine::~FluidEngine() {
@@ -932,9 +899,5 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("getVelocityYView", &FluidEngine::getVelocityYView)
         .function("getBarrierView", &FluidEngine::getBarrierView)
         .function("getDyeView", &FluidEngine::getDyeView)
-        .function("getTemperatureView", &FluidEngine::getTemperatureView)
-
-        .function("packData", &FluidEngine::packData)
-        .function("getPackedData1View", &FluidEngine::getPackedData1View)
-        .function("getPackedData2View", &FluidEngine::getPackedData2View);
+        .function("getTemperatureView", &FluidEngine::getTemperatureView);
 }

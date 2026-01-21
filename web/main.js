@@ -9,7 +9,7 @@ createFluidEngine().then(Module => {
 
     const params = {
         simulation: {
-            resolutionScale: 250,
+            resolutionScale: 200,
             iterations: 2,
             paused: false,
             dt: 0.95,
@@ -469,12 +469,17 @@ createFluidEngine().then(Module => {
             }
         }
 
-        engine.packData();
-        const packed1 = engine.getPackedData1View();
-        const packed2 = engine.getPackedData2View();
+        const views = {
+            ux: engine.getVelocityXView(),
+            uy: engine.getVelocityYView(),
+            rho: engine.getDensityView(),
+            dye: engine.getDyeView(),
+            obs: engine.getBarrierView(),
+            temp: engine.getTemperatureView()
+        };
 
         const vizParamsWithParticles = { ...params.visualization, particles: params.particles };
-        renderer.draw(packed1, packed2, vizParamsWithParticles, params.postProcessing);
+        renderer.draw(views, vizParamsWithParticles, params.postProcessing);
 
         if (mouse.isOver && !mouse.isDragging && params.brush.type !== 'none') {
             const brush = params.brush;

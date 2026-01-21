@@ -139,8 +139,8 @@ createFluidEngine().then(Module => {
     advancedPhysicsFolder.add(params.physics, 'maxVelocity', 0.01, 1.0).name('Max Velocity (Stability)').step(0.01).onChange(v => engine && engine.setMaxVelocity(v));
 
     const gravityFolder = physicsFolder.addFolder('Gravity').close();
-    const gravityXController = gravityFolder.add(params.physics, 'gravityX', -10, 10).name('X Component').step(0.01).onChange(updateGravity);
-    const gravityYController = gravityFolder.add(params.physics, 'gravityY', -10, 10).name('Y Component').step(0.01).onChange(updateGravity);
+    const gravityXController = gravityFolder.add(params.physics, 'gravityX', -4, 4).name('X Component').step(0.01).onChange(updateGravity);
+    const gravityYController = gravityFolder.add(params.physics, 'gravityY', -4, 4).name('Y Component').step(0.01).onChange(updateGravity);
     gravityFolder.add(params.features, 'enableGravity').name('Enable').onChange(enabled => {
         gravityXController.enable(enabled);
         gravityYController.enable(enabled);
@@ -170,7 +170,7 @@ createFluidEngine().then(Module => {
     }).name('Palette');
     viewFolder.add(params.visualization, 'contrast', 0.1, 5.0).name('Contrast / Gain').step(0.05);
     viewFolder.add(params.visualization, 'brightness', 0.1, 2.0).name('Brightness').step(0.05);
-    viewFolder.add(params.visualization, 'bias', -5.0, 5.0).name('Bias / Offset').step(0.01).listen();
+    viewFolder.add(params.visualization, 'bias', -1.0, 1.0).name('Bias / Offset').step(0.01).listen();
     viewFolder.add(params.visualization, 'power', 0.1, 5.0).name('Gamma / Power').step(0.1);
     viewFolder.addColor(params.visualization, 'obstacleColor').name('Obstacle Color');
     viewFolder.addColor(params.visualization, 'backgroundColor').name('Background Color');
@@ -197,7 +197,7 @@ createFluidEngine().then(Module => {
     inputFolder.add(params.brush, 'shape', ['Circle', 'Square', 'Diamond']).name('Shape');
     const falloffTypeController = inputFolder.add(params.brush, 'falloffType', ['Smooth', 'Gaussian']).name('Falloff Type');
     inputFolder.add(params.brush, 'angle', 0, 360).name('Angle (Deg)');
-    inputFolder.add(params.brush, 'aspectRatio', 0.1, 4.0).name('Aspect Ratio');
+    inputFolder.add(params.brush, 'aspectRatio', 0.01, 4.0).name('Aspect Ratio');
     const velocityStrengthController = inputFolder.add(params.brush, 'velocityStrength', 0.01, 10.0).name('Velocity Strength').step(0.01);
     const densityStrengthController = inputFolder.add(params.brush, 'densityStrength', 0.01, 10.0).name('Density Strength').step(0.01);
     const temperatureStrengthController = inputFolder.add(params.brush, 'temperatureStrength', 0.01, 20.0).name('Temperature Strength').step(0.01);
@@ -350,7 +350,7 @@ createFluidEngine().then(Module => {
             const simY = Math.round(prevPos.y + (currentPos.y - prevPos.y) * t);
 
             if (brush.type === 'obstacle') {
-                 engine.addObstacle(simX, simY, radius, brush.erase);
+                 engine.addObstacle(simX, simY, radius, brush.erase, brush.angle, brush.aspectRatio, shapeInt);
             } else {
                 if (brush.erase) {
                     engine.clearRegion(simX, simY, radius);
@@ -464,22 +464,34 @@ createFluidEngine().then(Module => {
             if (params.simulation.iterations > 0) {
                 engine.step(params.simulation.iterations);
             }
-            if (params.particles.show) {
-                renderer.updateParticles(params.simulation.dt);
-            }
         }
 
-        const views = {
-            ux: engine.getVelocityXView(),
-            uy: engine.getVelocityYView(),
-            rho: engine.getDensityView(),
-            dye: engine.getDyeView(),
-            obs: engine.getBarrierView(),
-            temp: engine.getTemperatureView()
-        };
+        const views = {};
+        const vizMode = params.visualization.mode;
+        const particlesOn = params.particles.show;
+
+        if (vizMode === 0 || vizMode === 1 || particlesOn) {
+            views.ux = engine.getVelocityXView();
+            views.uy = engine.getVelocityYView();
+        }
+        if (vizMode === 2) {
+            views.dye = engine.getDyeView();
+        }
+        if (vizMode === 3) {
+            views.temp = engine.getTemperatureView();
+        }
+        
+        const obsDirty = engine.checkBarrierDirty();
+        if (obsDirty || particlesOn) {
+            views.obs = engine.getBarrierView();
+        }
 
         const vizParamsWithParticles = { ...params.visualization, particles: params.particles };
-        renderer.draw(views, vizParamsWithParticles, params.postProcessing);
+        renderer.draw(views, vizParamsWithParticles, params.postProcessing, obsDirty);
+
+        if (!params.simulation.paused && particlesOn) {
+            renderer.updateParticles(params.simulation.dt);
+        }
 
         if (mouse.isOver && !mouse.isDragging && params.brush.type !== 'none') {
             const brush = params.brush;

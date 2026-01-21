@@ -40,9 +40,11 @@ public:
     void addDensity(int x, int y, float amount);
     void addTemperature(int x, int y, float amount);
     void clearRegion(int x, int y, int radius);
-    void addObstacle(int x, int y, int radius, bool remove);
+    void addObstacle(int x, int y, int radius, bool remove, float angle, float aspectRatio, int shape);
     void applyDimensionalBrush(int x, int y, int radius, int mode, float strength, float falloff, float angle, float aspectRatio, int shape, int falloffMode);
     void applyGenericBrush(int x, int y, int radius, float fx, float fy, float densityAmt, float tempAmt, float falloff, float angle, float aspectRatio, int shape, int falloffMode);
+    
+    bool checkBarrierDirty();
 
 private:
     int w, h;
@@ -85,6 +87,8 @@ private:
     std::function<void(int, int)> current_task;
     int task_start;
     int task_end;
+    
+    std::atomic<bool> barriersDirty;
 
     void initThreadPool(int count);
 

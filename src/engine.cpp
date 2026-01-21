@@ -16,7 +16,7 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0), barriersDirty(true) {
     std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
     int size = w * h;
     for(int k = 0; k < 9; ++k) {
@@ -41,6 +41,10 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     for (int k = 0; k < 9; ++k) {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
+}
+
+bool FluidEngine::checkBarrierDirty() {
+    return barriersDirty.exchange(false);
 }
 
 FluidEngine::~FluidEngine() {
@@ -386,30 +390,56 @@ void FluidEngine::addDensity(int x, int y, float amount) {
     dye[idx] += amount;
 }
 
-void FluidEngine::addObstacle(int x, int y, int radius, bool remove) {
+void FluidEngine::addObstacle(int x, int y, int radius, bool remove, float angle, float aspectRatio, int shape) {
+    float rad = (float)radius;
+    float angRad = angle * 3.14159265f / 180.0f;
+    float cosA = std::cos(angRad);
+    float sinA = std::sin(angRad);
+    float aspect = std::max(0.01f, aspectRatio);
+
     for (int dy = -radius; dy <= radius; ++dy) {
         for (int dx = -radius; dx <= radius; ++dx) {
-            if (dx * dx + dy * dy <= radius * radius) {
-                int nx = x + dx;
-                int ny = y + dy;
-                if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
-                    int idx = ny * w + nx;
-                    barriers[idx] = remove ? 0 : 255;
-                    
-                    if (!remove) {
-                        ux[idx] = 0.0f;
-                        uy[idx] = 0.0f;
-                        rho[idx] = 1.0f;
-                        dye[idx] = 0.0f;
-                        temperature[idx] = 0.0f;
-                        float feq[9];
-                        equilibrium(1.0f, 0.0f, 0.0f, feq);
-                        for(int k=0; k<9; ++k) f[k][idx] = feq[k];
-                    }
+            
+            float px = (float)dx;
+            float py = (float)dy;
+
+            float rx = px * cosA - py * sinA;
+            float ry = px * sinA + py * cosA;
+
+            ry /= aspect;
+
+            float dist = 0.0f;
+            if (shape == 0) { 
+                dist = std::sqrt(rx * rx + ry * ry);
+            } else if (shape == 1) { 
+                dist = std::max(std::abs(rx), std::abs(ry));
+            } else if (shape == 2) { 
+                dist = (std::abs(rx) + std::abs(ry)); 
+                if (shape == 2) dist *= 0.7071f;
+            }
+
+            if (dist > rad) continue;
+
+            int nx = x + dx;
+            int ny = y + dy;
+            if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                int idx = ny * w + nx;
+                barriers[idx] = remove ? 0 : 255;
+                
+                if (!remove) {
+                    ux[idx] = 0.0f;
+                    uy[idx] = 0.0f;
+                    rho[idx] = 1.0f;
+                    dye[idx] = 0.0f;
+                    temperature[idx] = 0.0f;
+                    float feq[9];
+                    equilibrium(1.0f, 0.0f, 0.0f, feq);
+                    for(int k=0; k<9; ++k) f[k][idx] = feq[k];
                 }
             }
         }
     }
+    barriersDirty.store(true);
 }
 
 void FluidEngine::reset() {
@@ -427,6 +457,7 @@ void FluidEngine::reset() {
     for (int k = 0; k < 9; ++k) {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
+    barriersDirty.store(true);
 }
 
 void FluidEngine::clearRegion(int x, int y, int radius) {
@@ -451,6 +482,7 @@ void FluidEngine::clearRegion(int x, int y, int radius) {
             }
         }
     }
+    barriersDirty.store(true);
 }
 
 void FluidEngine::step(int iterations) {
@@ -891,7 +923,7 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("setMaxVelocity", &FluidEngine::setMaxVelocity)
         .function("reset", &FluidEngine::reset)
         .function("clearRegion", &FluidEngine::clearRegion)
-        .function("addObstacle", &FluidEngine::addObstacle)
+        .function("addObstacle", emscripten::select_overload<void(int, int, int, bool, float, float, int)>(&FluidEngine::addObstacle))
         .function("applyDimensionalBrush", &FluidEngine::applyDimensionalBrush)
         .function("applyGenericBrush", &FluidEngine::applyGenericBrush)
         .function("getDensityView", &FluidEngine::getDensityView)
@@ -899,5 +931,6 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("getVelocityYView", &FluidEngine::getVelocityYView)
         .function("getBarrierView", &FluidEngine::getBarrierView)
         .function("getDyeView", &FluidEngine::getDyeView)
-        .function("getTemperatureView", &FluidEngine::getTemperatureView);
+        .function("getTemperatureView", &FluidEngine::getTemperatureView)
+        .function("checkBarrierDirty", &FluidEngine::checkBarrierDirty);
 }

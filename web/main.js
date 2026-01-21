@@ -50,9 +50,16 @@ createFluidEngine().then(Module => {
         particles: {
             show: false,
             count: 700000,
-            size: 0.5,
-            opacity: 0.5,
+            size: 0.05,
+            opacity: 0.22,
             color: '#ffffff',
+        },
+
+        postProcessing: {
+            enabled: false,
+            mode: 'Gaussian Blur',
+            radius: 2.0,
+            intensity: 1.0
         },
 
         brush: {
@@ -174,9 +181,15 @@ createFluidEngine().then(Module => {
     particleFolder.add(params.particles, 'count', 0, 1000000, 10000).name('Particle Count').onChange(count => {
         if(renderer) renderer.initParticles(count);
     });
-    particleFolder.add(params.particles, 'size', 0.01, 1.0).name('Size');
+    particleFolder.add(params.particles, 'size', 0.001, 0.2).name('Size');
     particleFolder.add(params.particles, 'opacity', 0.0, 1.0).name('Opacity');
     particleFolder.addColor(params.particles, 'color').name('Color');
+
+    const ppFolder = gui.addFolder('Post Processing').close();
+    ppFolder.add(params.postProcessing, 'enabled').name('Enable Filter');
+    ppFolder.add(params.postProcessing, 'mode', ['Gaussian Blur', 'Edge Detect', 'Sharpen']).name('Filter Type');
+    ppFolder.add(params.postProcessing, 'radius', 0.0, 50).name('Radius');
+    ppFolder.add(params.postProcessing, 'intensity', 0.0, 10).name('Intensity');
 
     const inputFolder = gui.addFolder('Interaction');
     const brushTypeController = inputFolder.add(params.brush, 'type', ['none', 'combined', 'velocity', 'density', 'temperature', 'vortex', 'expansion', 'noise', 'drag', 'obstacle']).name('Brush Mode');
@@ -463,11 +476,8 @@ createFluidEngine().then(Module => {
         const dyeArray = engine.getDyeView();
         const tempArray = engine.getTemperatureView();
 
-        renderer.draw(uxArray, uyArray, rhoArray, barrierArray, dyeArray, tempArray, params.visualization);
-
-        if (params.particles.show) {
-            renderer.drawParticles(params);
-        }
+        const vizParamsWithParticles = { ...params.visualization, particles: params.particles };
+        renderer.draw(uxArray, uyArray, rhoArray, barrierArray, dyeArray, tempArray, vizParamsWithParticles, params.postProcessing);
 
         if (mouse.isOver && !mouse.isDragging && params.brush.type !== 'none') {
             const brush = params.brush;

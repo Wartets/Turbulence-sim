@@ -336,3 +336,92 @@ void main() {
     
     outColor = vec4(u_color.rgb, u_color.a * alpha);
 }`;
+
+const POST_VS = `#version 300 es
+in vec2 a_position;
+out vec2 v_uv;
+void main() {
+    v_uv = a_position * 0.5 + 0.5;
+    gl_Position = vec4(a_position, 0.0, 1.0);
+}`;
+
+const POST_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_texture;
+uniform vec2 u_resolution;
+uniform int u_mode;
+uniform float u_radius;
+uniform float u_intensity;
+
+in vec2 v_uv;
+out vec4 outColor;
+
+vec4 gaussianBlur() {
+    vec4 color = vec4(0.0);
+    float total = 0.0;
+    
+    float r = u_radius;
+    for (float x = -2.0; x <= 2.0; x += 1.0) {
+        for (float y = -2.0; y <= 2.0; y += 1.0) {
+            vec2 offset = vec2(x, y) * r;
+            float weight = exp(-(x*x + y*y) / 4.0);
+            color += texture(u_texture, v_uv + offset / u_resolution) * weight;
+            total += weight;
+        }
+    }
+    return color / total;
+}
+
+vec4 sharpen() {
+    float kernel[9];
+    kernel[0] = -1.0; kernel[1] = -1.0; kernel[2] = -1.0;
+    kernel[3] = -1.0; kernel[4] =  9.0; kernel[5] = -1.0;
+    kernel[6] = -1.0; kernel[7] = -1.0; kernel[8] = -1.0;
+    
+    vec4 color = vec4(0.0);
+    int k = 0;
+    for(int y = -1; y <= 1; y++) {
+        for(int x = -1; x <= 1; x++) {
+            vec2 offset = vec2(float(x), float(y)) * u_radius;
+            color += texture(u_texture, v_uv + offset / u_resolution) * kernel[k];
+            k++;
+        }
+    }
+    return color; 
+}
+
+vec4 edgeDetect() {
+    float kernel[9];
+    kernel[0] = 1.0;  kernel[1] = 1.0;  kernel[2] = 1.0;
+    kernel[3] = 1.0;  kernel[4] = -8.0; kernel[5] = 1.0;
+    kernel[6] = 1.0;  kernel[7] = 1.0;  kernel[8] = 1.0;
+    
+    vec4 color = vec4(0.0);
+    int k = 0;
+    for(int y = -1; y <= 1; y++) {
+        for(int x = -1; x <= 1; x++) {
+            vec2 offset = vec2(float(x), float(y)) * u_radius;
+            color += texture(u_texture, v_uv + offset / u_resolution) * kernel[k];
+            k++;
+        }
+    }
+    return vec4(vec3(length(color.rgb) * u_intensity), 1.0);
+}
+
+void main() {
+    if (u_mode == 0) {
+        outColor = texture(u_texture, v_uv);
+    } else if (u_mode == 1) {
+        outColor = gaussianBlur();
+    } else if (u_mode == 2) {
+        vec4 edge = edgeDetect();
+        vec4 orig = texture(u_texture, v_uv);
+        outColor = mix(orig, edge, u_intensity);
+    } else if (u_mode == 3) {
+        vec4 sharp = sharpen();
+        vec4 orig = texture(u_texture, v_uv);
+        outColor = mix(orig, sharp, u_intensity);
+    } else {
+        outColor = texture(u_texture, v_uv);
+    }
+}`;

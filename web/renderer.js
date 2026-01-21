@@ -18,6 +18,7 @@ class Renderer {
         this.particleRenderProgram = this.createProgram(PARTICLE_VS, PARTICLE_FS);
         this.particleUpdateProgram = this.createProgram(PARTICLE_UPDATE_VS, PARTICLE_UPDATE_FS);
         this.brushProgram = this.createProgram(BRUSH_VS, BRUSH_FS);
+        this.postProgram = this.createProgram(POST_VS, POST_FS);
         
         this.texUx = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
         this.texUy = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
@@ -47,6 +48,8 @@ class Renderer {
         ];
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
         this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(brushVerts), this.gl.STATIC_DRAW);
+
+        this.initPostProcessing();
 
         this.gl.useProgram(this.program);
         this.uniforms = {
@@ -93,6 +96,14 @@ class Renderer {
             aspect: this.gl.getUniformLocation(this.brushProgram, "u_aspect"),
             shape: this.gl.getUniformLocation(this.brushProgram, "u_shape")
         };
+        
+        this.postUniforms = {
+            texture: this.gl.getUniformLocation(this.postProgram, "u_texture"),
+            resolution: this.gl.getUniformLocation(this.postProgram, "u_resolution"),
+            mode: this.gl.getUniformLocation(this.postProgram, "u_mode"),
+            radius: this.gl.getUniformLocation(this.postProgram, "u_radius"),
+            intensity: this.gl.getUniformLocation(this.postProgram, "u_intensity")
+        };
     }
 
     initParticles(count) {
@@ -119,6 +130,22 @@ class Renderer {
         
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleIndexBuffer);
         this.gl.bufferData(this.gl.ARRAY_BUFFER, indices, this.gl.STATIC_DRAW);
+    }
+
+    initPostProcessing() {
+        this.postFBO = this.gl.createFramebuffer();
+        this.postTex = this.gl.createTexture();
+        
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.postTex);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+        this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.canvas.width, this.gl.canvas.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
+        
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.postFBO);
+        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.postTex, 0);
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
     }
 
     createProgram(vs, fs) {
@@ -199,11 +226,22 @@ class Renderer {
         this.texPartB = temp;
     }
 
-    draw(uxData, uyData, rhoData, barrierData, dyeData, tempData, vizParams) {
-        this.gl.disable(this.gl.BLEND);
-        this.gl.useProgram(this.program);
+    draw(uxData, uyData, rhoData, barrierData, dyeData, tempData, vizParams, postParams) {
+        const usePost = postParams && postParams.enabled;
+        
+        if (usePost) {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.postFBO);
+            this.gl.clearColor(0, 0, 0, 1);
+            this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+        } else {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+        }
+
         this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
 
+        this.gl.disable(this.gl.BLEND);
+        this.gl.useProgram(this.program);
+        
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
         const positionLoc = this.gl.getAttribLocation(this.program, "a_position");
         this.gl.enableVertexAttribArray(positionLoc);
@@ -261,6 +299,40 @@ class Renderer {
         this.gl.uniform1i(this.uniforms.vorticityBipolar, vizParams.vorticityBipolar);
 
         this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+
+        if (vizParams.particles && vizParams.particles.show) {
+            this.drawParticles(vizParams); 
+        }
+
+        if (usePost) {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+            this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+            this.gl.disable(this.gl.BLEND);
+            
+            this.gl.useProgram(this.postProgram);
+            
+            this.gl.activeTexture(this.gl.TEXTURE0);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.postTex);
+            this.gl.uniform1i(this.postUniforms.texture, 0);
+            
+            this.gl.uniform2f(this.postUniforms.resolution, this.gl.canvas.width, this.gl.canvas.height);
+            
+            let modeIdx = 0;
+            if (postParams.mode === 'Gaussian Blur') modeIdx = 1;
+            else if (postParams.mode === 'Edge Detect') modeIdx = 2;
+            else if (postParams.mode === 'Sharpen') modeIdx = 3;
+            
+            this.gl.uniform1i(this.postUniforms.mode, modeIdx);
+            this.gl.uniform1f(this.postUniforms.radius, postParams.radius);
+            this.gl.uniform1f(this.postUniforms.intensity, postParams.intensity);
+            
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
+            const posLoc = this.gl.getAttribLocation(this.postProgram, "a_position");
+            this.gl.enableVertexAttribArray(posLoc);
+            this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
+            
+            this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+        }
     }
 
     drawParticles(params) {

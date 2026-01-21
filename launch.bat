@@ -12,7 +12,7 @@ set "SRC_DIR=src"
 set "OUT_DIR=web"
 set "SOURCE_FILE=%SRC_DIR%\engine.cpp"
 set "OUTPUT_FILE=%OUT_DIR%\engine.js"
-set "PORT=8000"
+set "PORT=8005"
 set "SERVER_LOG=server_log.txt"
 set "EMCC_FLAGS=-O3 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME=createFluidEngine --bind"
 
@@ -62,17 +62,32 @@ if not exist "%SRC_DIR%" goto ERR_SRC
 :: SERVER MANAGEMENT
 :: ==============================================================================
 
-echo  [*] Checking HTTP Server status...
+echo  [*] Configuring High-Performance Server...
 
-:: Check if python server is running; if not, start it in background
-tasklist /FI "IMAGENAME eq python.exe" /V | findstr /C:"TurbulenceServer" >nul
-if %ERRORLEVEL%==0 (
-    echo  [OK] Server is already running.
-) else (
-    echo  [..] Starting Python Server on Port %PORT%...
-    start "TurbulenceServer" /b python -m http.server %PORT% -d . > "%SERVER_LOG%" 2>&1
-    echo  [OK] Server started. Logs at: %SERVER_LOG%
-)
+taskkill /F /FI "WINDOWTITLE eq TurbulenceServer" /T >nul 2>&1
+
+echo import http.server > server_optimized.py
+echo import socketserver >> server_optimized.py
+echo import sys >> server_optimized.py
+echo PORT = int(sys.argv[1]) >> server_optimized.py
+echo class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer): >> server_optimized.py
+echo     daemon_threads = True >> server_optimized.py
+echo     allow_reuse_address = True >> server_optimized.py
+echo class NoCacheHandler(http.server.SimpleHTTPRequestHandler): >> server_optimized.py
+echo     def end_headers(self): >> server_optimized.py
+echo         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0') >> server_optimized.py
+echo         self.send_header('Pragma', 'no-cache') >> server_optimized.py
+echo         self.send_header('Expires', '0') >> server_optimized.py
+echo         super().end_headers() >> server_optimized.py
+echo if __name__ == '__main__': >> server_optimized.py
+echo     socketserver.TCPServer.allow_reuse_address = True >> server_optimized.py
+echo     with ThreadedHTTPServer(("", PORT), NoCacheHandler) as httpd: >> server_optimized.py
+echo         print(f"Serving on port {PORT} with Multi-threaded Optimization") >> server_optimized.py
+echo         httpd.serve_forever() >> server_optimized.py
+
+echo  [..] Starting Optimized Server on Port %PORT%...
+start "TurbulenceServer" /b python server_optimized.py %PORT% > "%SERVER_LOG%" 2>&1
+echo  [OK] Server started (Threaded/No-Cache). Logs at: %SERVER_LOG%
 
 :: ==============================================================================
 :: BUILD LOOP

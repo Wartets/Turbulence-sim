@@ -14,7 +14,7 @@ set "SOURCE_FILE=%SRC_DIR%\engine.cpp"
 set "OUTPUT_FILE=%OUT_DIR%\engine.js"
 set "PORT=8005"
 set "SERVER_LOG=server_log.txt"
-set "EMCC_FLAGS=-O3 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME=createFluidEngine --bind"
+set "EMCC_FLAGS=-O3 -msimd128 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME=createFluidEngine --bind"
 
 :: ==============================================================================
 :: ENVIRONMENT CHECKS

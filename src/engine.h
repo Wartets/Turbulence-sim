@@ -36,6 +36,10 @@ public:
     emscripten::val getDyeView();
     emscripten::val getTemperatureView();
 
+    void packData();
+    emscripten::val getPackedData1View();
+    emscripten::val getPackedData2View();
+
     void reset();
     void addDensity(int x, int y, float amount);
     void addTemperature(int x, int y, float amount);
@@ -70,6 +74,9 @@ private:
     std::vector<float> temperature;
     std::vector<float> temperature_new;
     
+    std::vector<float> packedData1;
+    std::vector<float> packedData2;
+
     std::vector<float> forceX;
     std::vector<float> forceY;
     std::vector<float> curl;

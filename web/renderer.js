@@ -20,12 +20,8 @@ class Renderer {
         this.brushProgram = this.createProgram(BRUSH_VS, BRUSH_FS);
         this.postProgram = this.createProgram(POST_VS, POST_FS);
         
-        this.texUx = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
-        this.texUy = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
-        this.texRho = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
-        this.texObstacles = this.createTexture(this.gl.R8, this.gl.RED, this.gl.UNSIGNED_BYTE, this.width, this.height);
-        this.texDye = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
-        this.texTemperature = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
+        this.texPacked1 = this.createTexture(this.gl.RGBA32F, this.gl.RGBA, this.gl.FLOAT, this.width, this.height);
+        this.texPacked2 = this.createTexture(this.gl.RGBA32F, this.gl.RGBA, this.gl.FLOAT, this.width, this.height);
 
         this.quadBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
@@ -53,12 +49,8 @@ class Renderer {
 
         this.gl.useProgram(this.program);
         this.uniforms = {
-            velocity_x: this.gl.getUniformLocation(this.program, "u_velocity_x"),
-            velocity_y: this.gl.getUniformLocation(this.program, "u_velocity_y"),
-            density: this.gl.getUniformLocation(this.program, "u_density"),
-            obstacles: this.gl.getUniformLocation(this.program, "u_obstacles"),
-            dye: this.gl.getUniformLocation(this.program, "u_dye"),
-            temperature: this.gl.getUniformLocation(this.program, "u_temperature"),
+            packed1: this.gl.getUniformLocation(this.program, "u_packed1"),
+            packed2: this.gl.getUniformLocation(this.program, "u_packed2"),
             mode: this.gl.getUniformLocation(this.program, "u_mode"),
             contrast: this.gl.getUniformLocation(this.program, "u_contrast"),
             brightness: this.gl.getUniformLocation(this.program, "u_brightness"),
@@ -79,9 +71,8 @@ class Renderer {
 
         this.particleUpdateUniforms = {
             currPos: this.gl.getUniformLocation(this.particleUpdateProgram, "u_curr_pos"),
-            velX: this.gl.getUniformLocation(this.particleUpdateProgram, "u_vel_x"),
-            velY: this.gl.getUniformLocation(this.particleUpdateProgram, "u_vel_y"),
-            obstacles: this.gl.getUniformLocation(this.particleUpdateProgram, "u_obstacles"),
+            packed1: this.gl.getUniformLocation(this.particleUpdateProgram, "u_packed1"),
+            packed2: this.gl.getUniformLocation(this.particleUpdateProgram, "u_packed2"),
             dt: this.gl.getUniformLocation(this.particleUpdateProgram, "u_dt"),
             simDim: this.gl.getUniformLocation(this.particleUpdateProgram, "u_sim_dim"),
             seed: this.gl.getUniformLocation(this.particleUpdateProgram, "u_seed")
@@ -197,16 +188,12 @@ class Renderer {
         this.gl.uniform1i(this.particleUpdateUniforms.currPos, 0);
 
         this.gl.activeTexture(this.gl.TEXTURE1);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUx);
-        this.gl.uniform1i(this.particleUpdateUniforms.velX, 1);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPacked1);
+        this.gl.uniform1i(this.particleUpdateUniforms.packed1, 1);
 
         this.gl.activeTexture(this.gl.TEXTURE2);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
-        this.gl.uniform1i(this.particleUpdateUniforms.velY, 2);
-
-        this.gl.activeTexture(this.gl.TEXTURE3);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texObstacles);
-        this.gl.uniform1i(this.particleUpdateUniforms.obstacles, 3);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPacked2);
+        this.gl.uniform1i(this.particleUpdateUniforms.packed2, 2);
 
         this.gl.uniform1f(this.particleUpdateUniforms.dt, dt);
         this.gl.uniform2f(this.particleUpdateUniforms.simDim, this.width, this.height);
@@ -226,7 +213,7 @@ class Renderer {
         this.texPartB = temp;
     }
 
-    draw(uxData, uyData, rhoData, barrierData, dyeData, tempData, vizParams, postParams) {
+    draw(packedData1, packedData2, vizParams, postParams) {
         const usePost = postParams && postParams.enabled;
         
         if (usePost) {
@@ -248,34 +235,14 @@ class Renderer {
         this.gl.vertexAttribPointer(positionLoc, 2, this.gl.FLOAT, false, 0, 0);
 
         this.gl.activeTexture(this.gl.TEXTURE0);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUx);
-        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, uxData);
-        this.gl.uniform1i(this.uniforms.velocity_x, 0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPacked1);
+        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RGBA, this.gl.FLOAT, packedData1);
+        this.gl.uniform1i(this.uniforms.packed1, 0);
 
         this.gl.activeTexture(this.gl.TEXTURE1);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
-        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, uyData);
-        this.gl.uniform1i(this.uniforms.velocity_y, 1);
-
-        this.gl.activeTexture(this.gl.TEXTURE2);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texRho);
-        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, rhoData);
-        this.gl.uniform1i(this.uniforms.density, 2);
-
-        this.gl.activeTexture(this.gl.TEXTURE3);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texObstacles);
-        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.UNSIGNED_BYTE, barrierData);
-        this.gl.uniform1i(this.uniforms.obstacles, 3);
-
-        this.gl.activeTexture(this.gl.TEXTURE4);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texDye);
-        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, dyeData);
-        this.gl.uniform1i(this.uniforms.dye, 4);
-
-        this.gl.activeTexture(this.gl.TEXTURE5);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texTemperature);
-        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, tempData);
-        this.gl.uniform1i(this.uniforms.temperature, 5);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPacked2);
+        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RGBA, this.gl.FLOAT, packedData2);
+        this.gl.uniform1i(this.uniforms.packed2, 1);
 
         this.gl.uniform1i(this.uniforms.mode, vizParams.mode);
         this.gl.uniform1f(this.uniforms.contrast, vizParams.contrast);

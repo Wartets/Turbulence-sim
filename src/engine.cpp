@@ -16,7 +16,7 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1), stop(false) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0) {
     std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
     int size = w * h;
     for(int k = 0; k < 9; ++k) {
@@ -44,11 +44,8 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
 }
 
 FluidEngine::~FluidEngine() {
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        stop = true;
-    }
-    condition.notify_all();
+    stop_pool = true;
+    worker_cv.notify_all();
     for (std::thread &worker : workers) {
         if (worker.joinable()) {
             worker.join();
@@ -59,17 +56,37 @@ FluidEngine::~FluidEngine() {
 void FluidEngine::initThreadPool(int count) {
     #ifdef __EMSCRIPTEN_PTHREADS__
         for(int i = 0; i < count; ++i) {
-            workers.emplace_back([this] {
+            workers.emplace_back([this, i] {
+                int my_generation = 0;
                 while(true) {
-                    std::function<void()> task;
+                    std::function<void(int, int)> task;
+                    int start, end;
+                    
                     {
-                        std::unique_lock<std::mutex> lock(queue_mutex);
-                        condition.wait(lock, [this]{ return stop || !tasks.empty(); });
-                        if(stop && tasks.empty()) return;
-                        task = std::move(tasks.front());
-                        tasks.pop();
+                        std::unique_lock<std::mutex> lock(worker_mutex);
+                        worker_cv.wait(lock, [this, my_generation]{ 
+                            return stop_pool || work_generation > my_generation; 
+                        });
+                        
+                        if(stop_pool) return;
+                        
+                        task = current_task;
+                        start = task_start;
+                        end = task_end;
+                        my_generation = work_generation;
                     }
-                    task();
+                    
+                    int total_range = end - start;
+                    int chunk = total_range / threadCount;
+                    int r_start = start + i * chunk;
+                    int r_end = (i == threadCount - 1) ? end : r_start + chunk;
+                    
+                    task(r_start, r_end);
+                    
+                    if(pending_workers.fetch_sub(1) == 1) {
+                        std::lock_guard<std::mutex> lock(worker_mutex);
+                        main_cv.notify_one();
+                    }
                 }
             });
         }
@@ -82,18 +99,16 @@ void FluidEngine::setThreadCount(int count) {
     
     if (newCount == threadCount && !workers.empty()) return;
 
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        stop = true;
-    }
-    condition.notify_all();
+    stop_pool = true;
+    worker_cv.notify_all();
     for(std::thread &worker : workers) {
         if(worker.joinable()) worker.join();
     }
     workers.clear();
 
     threadCount = newCount;
-    stop = false;
+    stop_pool = false;
+    work_generation = 0;
     
     if (threadCount > 1) {
         initThreadPool(threadCount);
@@ -105,32 +120,18 @@ void FluidEngine::parallel_for(int start, int end, std::function<void(int, int)>
         func(start, end);
     } else {
         #ifdef __EMSCRIPTEN_PTHREADS__
-            std::vector<std::future<void>> futures;
-            int total = end - start;
-            int chunk = total / threadCount;
-            
-            for (int i = 0; i < threadCount; ++i) {
-                int range_start = start + i * chunk;
-                int range_end = (i == threadCount - 1) ? end : range_start + chunk;
-                
-                auto task = std::make_shared<std::packaged_task<void()>>(
-                    [func, range_start, range_end](){
-                        func(range_start, range_end);
-                    }
-                );
-                
-                futures.emplace_back(task->get_future());
-                
-                {
-                    std::unique_lock<std::mutex> lock(queue_mutex);
-                    tasks.emplace([task](){ (*task)(); });
-                }
+            {
+                std::lock_guard<std::mutex> lock(worker_mutex);
+                current_task = func;
+                task_start = start;
+                task_end = end;
+                pending_workers = threadCount;
+                work_generation++;
             }
-            condition.notify_all();
+            worker_cv.notify_all();
             
-            for(auto &f : futures) {
-                f.wait();
-            }
+            std::unique_lock<std::mutex> lock(worker_mutex);
+            main_cv.wait(lock, [this]{ return pending_workers == 0; });
         #else
             func(start, end);
         #endif

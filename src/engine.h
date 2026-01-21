@@ -75,10 +75,16 @@ private:
     std::vector<float> curl;
 
     std::vector<std::thread> workers;
-    std::queue<std::function<void()>> tasks;
-    std::mutex queue_mutex;
-    std::condition_variable condition;
-    bool stop;
+    std::mutex worker_mutex;
+    std::condition_variable worker_cv;
+    std::condition_variable main_cv;
+    std::atomic<bool> stop_pool;
+    std::atomic<int> pending_workers;
+    int work_generation;
+    
+    std::function<void(int, int)> current_task;
+    int task_start;
+    int task_end;
 
     void initThreadPool(int count);
 

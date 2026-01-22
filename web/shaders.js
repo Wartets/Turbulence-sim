@@ -6,15 +6,16 @@ void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
 }`;
 
-const PARTICLE_UPDATE_VS = `#version 300 es
-layout(location = 0) in vec2 a_position;
+const MINIMAL_FS = `#version 300 es
 void main() {
-    gl_Position = vec4(a_position, 0.0, 1.0);
 }`;
 
-const PARTICLE_UPDATE_FS = `#version 300 es
+const PARTICLE_UPDATE_VS = `#version 300 es
 precision highp float;
-uniform sampler2D u_curr_pos;
+
+layout(location = 0) in vec2 a_pos;
+layout(location = 1) in vec2 a_rand;
+
 uniform sampler2D u_ux;
 uniform sampler2D u_uy;
 uniform sampler2D u_obs;
@@ -23,16 +24,15 @@ uniform vec2 u_sim_dim;
 uniform float u_seed;
 uniform vec4 u_boundary_conditions;
 
-out vec4 outNewPos;
+out vec2 v_newPos;
+out vec2 v_newRand;
 
 float rand(vec2 co) {
     return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
 void main() {
-    ivec2 coord = ivec2(gl_FragCoord.xy);
-    vec4 pos = texelFetch(u_curr_pos, coord, 0);
-    vec2 p = pos.xy;
+    vec2 p = a_pos;
     
     vec2 uv1 = p / u_sim_dim;
     vec2 v1 = vec2(texture(u_ux, uv1).r, texture(u_uy, uv1).r);
@@ -69,29 +69,35 @@ void main() {
     float oldObs = texture(u_obs, uv1).r;
     float newObs = texture(u_obs, newUV).r;
 
-    bool isDead = (pos.x < -100.0);
+    bool isDead = (a_pos.x < -100.0);
     bool hitObstacle = (oldObs > 0.1) || (newObs > 0.1);
-    bool randomRespawn = (rand(vec2(u_seed, float(coord.x) + float(coord.y)*u_sim_dim.x)) > 0.999);
+    bool randomRespawn = (rand(vec2(u_seed, a_rand.x + a_rand.y + float(gl_VertexID))) > 0.999);
 
     if (isDead || hitObstacle || randomRespawn || should_respawn) {
-        bool found = false;
-        for(int i = 0; i < 15; i++) {
-            float rx = rand(vec2(u_seed + float(i)*1.1, float(coord.x) + float(i)*0.3)) * u_sim_dim.x;
-            float ry = rand(vec2(u_seed - float(i)*1.2, float(coord.y) - float(i)*0.4)) * u_sim_dim.y;
-            vec2 checkUV = vec2(rx, ry) / u_sim_dim;
-            
-            if (texture(u_obs, checkUV).r < 0.1) {
-                p = vec2(rx, ry);
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-             p = vec2(-200.0, -200.0);
+        float rx = rand(vec2(u_seed + a_rand.x, float(gl_VertexID) * 0.3)) * u_sim_dim.x;
+        float ry = rand(vec2(u_seed - a_rand.y, float(gl_VertexID) * 0.4)) * u_sim_dim.y;
+        vec2 checkUV = vec2(rx, ry) / u_sim_dim;
+        
+        if (texture(u_obs, checkUV).r < 0.1) {
+            p = vec2(rx, ry);
+        } else {
+            p = vec2(-200.0, -200.0);
         }
     }
 
-    outNewPos = vec4(p, 0.0, 1.0);
+    v_newPos = p;
+    v_newRand = a_rand;
+}`;
+
+const PARTICLE_VS = `#version 300 es
+layout(location = 0) in vec2 a_position;
+uniform vec2 u_resolution;
+uniform float u_particle_size;
+
+void main() {
+    vec2 clipSpace = (a_position / u_resolution) * 2.0 - 1.0;
+    gl_Position = vec4(clipSpace, 0.0, 1.0);
+    gl_PointSize = u_particle_size;
 }`;
 
 const VORTICITY_FS_SOURCE = `#version 300 es
@@ -248,8 +254,7 @@ void main() {
     }
 
     outColor = vec4(final_color, 1.0);
-}
-`;
+}`;
 
 const VELOCITY_VIS_FS = `#version 300 es
 precision highp float;
@@ -424,22 +429,6 @@ void main() {
     outColor = vec4(final_color, 1.0);
 }
 `;
-
-const PARTICLE_VS = `#version 300 es
-layout(location = 0) in float a_index;
-uniform sampler2D u_positions;
-uniform vec2 u_resolution;
-uniform float u_particle_size;
-
-void main() {
-    int texSize = textureSize(u_positions, 0).x;
-    int x = int(a_index) % texSize;
-    int y = int(a_index) / texSize;
-    vec4 posData = texelFetch(u_positions, ivec2(x, y), 0);
-    vec2 clipSpace = (posData.xy / u_resolution) * 2.0 - 1.0;
-    gl_Position = vec4(clipSpace, 0.0, 1.0);
-    gl_PointSize = u_particle_size;
-}`;
 
 const PARTICLE_FS = `#version 300 es
 precision mediump float;

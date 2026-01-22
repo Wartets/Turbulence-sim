@@ -18,7 +18,7 @@ createFluidEngine().then(Module => {
             resolutionScale: 300,
             iterations: 2,
             paused: false,
-            dt: 0.1,
+            dt: 1.0,
             threads: navigator.hardwareConcurrency || 4
         },
 

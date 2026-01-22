@@ -24,7 +24,7 @@ class Renderer {
         this.modeMap = ['vorticity', 'velocity', 'dye', 'temperature', 'pressure'];
 
         this.particleRenderProgram = this.createProgram(PARTICLE_VS, PARTICLE_FS);
-        this.particleUpdateProgram = this.createProgram(PARTICLE_UPDATE_VS, PARTICLE_UPDATE_FS);
+        this.particleUpdateProgram = this.createProgram(PARTICLE_UPDATE_VS, MINIMAL_FS, ['v_newPos', 'v_newRand']);
         this.brushProgram = this.createProgram(BRUSH_VS, BRUSH_FS);
         this.postProgram = this.createProgram(POST_VS, POST_FS);
         this.vorticityProgram = this.createProgram(VS_SOURCE, VORTICITY_FS_SOURCE);
@@ -50,14 +50,12 @@ class Renderer {
         this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 0, 0);
         this.gl.bindVertexArray(null);
 
-        this.particleIndexBuffer = this.gl.createBuffer();
-        this.particleVAO = this.gl.createVertexArray();
-        this.particleFBO = this.gl.createFramebuffer();
-        this.vorticityFBO = this.gl.createFramebuffer();
-        this.texPartA = null;
-        this.texPartB = null;
+        this.particleBuffers = [null, null];
+        this.particleVAOs = [null, null];
+        this.transformFeedback = null;
         this.particleCount = 0;
-        this.particleTexDim = 0;
+        this.particleStateIndex = 0;
+        this.vorticityFBO = this.gl.createFramebuffer();
 
         this.brushBuffer = this.gl.createBuffer();
         this.brushVertexCount = 6;
@@ -84,20 +82,19 @@ class Renderer {
         }
         
         this.particleRenderUniforms = {
-            positions: this.gl.getUniformLocation(this.particleRenderProgram, "u_positions"),
             resolution: this.gl.getUniformLocation(this.particleRenderProgram, "u_resolution"),
             size: this.gl.getUniformLocation(this.particleRenderProgram, "u_particle_size"),
             color: this.gl.getUniformLocation(this.particleRenderProgram, "u_particle_color")
         };
 
         this.particleUpdateUniforms = {
-            currPos: this.gl.getUniformLocation(this.particleUpdateProgram, "u_curr_pos"),
             ux: this.gl.getUniformLocation(this.particleUpdateProgram, "u_ux"),
             uy: this.gl.getUniformLocation(this.particleUpdateProgram, "u_uy"),
             obs: this.gl.getUniformLocation(this.particleUpdateProgram, "u_obs"),
             dt: this.gl.getUniformLocation(this.particleUpdateProgram, "u_dt"),
             simDim: this.gl.getUniformLocation(this.particleUpdateProgram, "u_sim_dim"),
-            seed: this.gl.getUniformLocation(this.particleUpdateProgram, "u_seed")
+            seed: this.gl.getUniformLocation(this.particleUpdateProgram, "u_seed"),
+            boundaries: this.gl.getUniformLocation(this.particleUpdateProgram, "u_boundary_conditions")
         };
 
         this.brushUniforms = {
@@ -168,34 +165,43 @@ class Renderer {
 
     initParticles(count) {
         this.particleCount = count;
-        this.particleTexDim = Math.ceil(Math.sqrt(count));
-        const totalPixels = this.particleTexDim * this.particleTexDim;
-        
-        const initialData = new Float32Array(totalPixels * 4);
-        for(let i=0; i<count; i++) {
-            initialData[i*4 + 0] = Math.random() * this.width;
-            initialData[i*4 + 1] = Math.random() * this.height;
-            initialData[i*4 + 2] = 0; 
-            initialData[i*4 + 3] = 0; 
+        if (this.particleCount === 0) return;
+
+        const particleData = new Float32Array(this.particleCount * 4);
+        for (let i = 0; i < this.particleCount; i++) {
+            particleData[i * 4 + 0] = Math.random() * this.width;
+            particleData[i * 4 + 1] = Math.random() * this.height;
+            particleData[i * 4 + 2] = Math.random();
+            particleData[i * 4 + 3] = Math.random();
         }
 
-        if(this.texPartA) this.gl.deleteTexture(this.texPartA);
-        if(this.texPartB) this.gl.deleteTexture(this.texPartB);
+        this.particleBuffers.forEach((_, i) => {
+            if (this.particleBuffers[i]) this.gl.deleteBuffer(this.particleBuffers[i]);
+            this.particleBuffers[i] = this.gl.createBuffer();
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleBuffers[i]);
+            this.gl.bufferData(this.gl.ARRAY_BUFFER, particleData, this.gl.DYNAMIC_DRAW);
+        });
 
-        this.texPartA = this.createTexture(this.gl.RGBA32F, this.gl.RGBA, this.gl.FLOAT, this.particleTexDim, this.particleTexDim, initialData);
-        this.texPartB = this.createTexture(this.gl.RGBA32F, this.gl.RGBA, this.gl.FLOAT, this.particleTexDim, this.particleTexDim, initialData);
+        this.particleVAOs.forEach((_, i) => {
+            if (this.particleVAOs[i]) this.gl.deleteVertexArray(this.particleVAOs[i]);
+            this.particleVAOs[i] = this.gl.createVertexArray();
+            this.gl.bindVertexArray(this.particleVAOs[i]);
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleBuffers[i]);
+            
+            this.gl.enableVertexAttribArray(0);
+            this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 16, 0);
 
-        const indices = new Float32Array(count);
-        for(let i=0; i<count; i++) indices[i] = i;
+            this.gl.enableVertexAttribArray(1);
+            this.gl.vertexAttribPointer(1, 2, this.gl.FLOAT, false, 16, 8);
+        });
         
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleIndexBuffer);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, indices, this.gl.STATIC_DRAW);
-
-        this.gl.bindVertexArray(this.particleVAO);
-        this.gl.enableVertexAttribArray(0);
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleIndexBuffer);
-        this.gl.vertexAttribPointer(0, 1, this.gl.FLOAT, false, 0, 0);
         this.gl.bindVertexArray(null);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, null);
+        
+        if (this.transformFeedback) this.gl.deleteTransformFeedback(this.transformFeedback);
+        this.transformFeedback = this.gl.createTransformFeedback();
+        
+        this.particleStateIndex = 0;
     }
 
     initPostProcessing() {
@@ -214,7 +220,7 @@ class Renderer {
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
     }
 
-    createProgram(vs, fs) {
+    createProgram(vs, fs, transformFeedbackVaryings = null) {
         const createShader = (type, src) => {
             const shader = this.gl.createShader(type);
             this.gl.shaderSource(shader, src);
@@ -228,6 +234,11 @@ class Renderer {
         const prog = this.gl.createProgram();
         this.gl.attachShader(prog, createShader(this.gl.VERTEX_SHADER, vs));
         this.gl.attachShader(prog, createShader(this.gl.FRAGMENT_SHADER, fs));
+
+        if (transformFeedbackVaryings) {
+            this.gl.transformFeedbackVaryings(prog, transformFeedbackVaryings, this.gl.INTERLEAVED_ATTRIBS);
+        }
+
         this.gl.linkProgram(prog);
         return prog;
     }
@@ -252,15 +263,13 @@ class Renderer {
     updateParticles(dt, physicsParams) {
         if(this.particleCount === 0) return;
 
-        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.particleFBO);
-        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.texPartB, 0);
-        this.gl.viewport(0, 0, this.particleTexDim, this.particleTexDim);
+        const sourceIndex = this.particleStateIndex;
+        const destIndex = (sourceIndex + 1) % 2;
+
+        const sourceVAO = this.particleVAOs[sourceIndex];
+        const destBuffer = this.particleBuffers[destIndex];
 
         this.gl.useProgram(this.particleUpdateProgram);
-
-        this.gl.activeTexture(this.gl.TEXTURE0);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPartA);
-        this.gl.uniform1i(this.particleUpdateUniforms.currPos, 0);
 
         this.gl.activeTexture(this.gl.TEXTURE1);
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUx);
@@ -283,16 +292,25 @@ class Renderer {
             physicsParams.boundaryBottom,
             physicsParams.boundaryTop
         );
+        
+        this.gl.bindVertexArray(sourceVAO);
+        
+        this.gl.bindTransformFeedback(this.gl.TRANSFORM_FEEDBACK, this.transformFeedback);
+        this.gl.bindBufferBase(this.gl.TRANSFORM_FEEDBACK_BUFFER, 0, destBuffer);
+        
+        this.gl.enable(this.gl.RASTERIZER_DISCARD);
+        
+        this.gl.beginTransformFeedback(this.gl.POINTS);
+        this.gl.drawArrays(this.gl.POINTS, 0, this.particleCount);
+        this.gl.endTransformFeedback();
 
-        this.gl.bindVertexArray(this.quadVAO);
-        this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+        this.gl.disable(this.gl.RASTERIZER_DISCARD);
+        
+        this.gl.bindBufferBase(this.gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
+        this.gl.bindTransformFeedback(this.gl.TRANSFORM_FEEDBACK, null);
         this.gl.bindVertexArray(null);
 
-        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
-
-        let temp = this.texPartA;
-        this.texPartA = this.texPartB;
-        this.texPartB = temp;
+        this.particleStateIndex = destIndex;
     }
 
     draw(views, vizParams, postParams, obsDirty) {
@@ -452,12 +470,8 @@ class Renderer {
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE);
 
         this.gl.useProgram(this.particleRenderProgram);
-        this.gl.bindVertexArray(this.particleVAO);
+        this.gl.bindVertexArray(this.particleVAOs[this.particleStateIndex]);
         
-        this.gl.activeTexture(this.gl.TEXTURE0);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPartA);
-        this.gl.uniform1i(this.particleRenderUniforms.positions, 0);
-
         this.gl.uniform2f(this.particleRenderUniforms.resolution, this.width, this.height);
         this.gl.uniform1f(this.particleRenderUniforms.size, params.particles.size);
         

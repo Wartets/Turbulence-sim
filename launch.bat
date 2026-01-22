@@ -3,7 +3,6 @@ setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 title Turbulence Simulation Dev Environment
 color 0B
-cls
 
 :: ==============================================================================
 :: CONFIGURATION
@@ -14,7 +13,6 @@ set "SOURCE_FILE=%SRC_DIR%\engine.cpp"
 set "OUTPUT_FILE=%OUT_DIR%\engine.js"
 set "PORT=8005"
 set "SERVER_LOG=server_log.txt"
-set "EMCC_FLAGS=-O3 -msimd128 -s WASM=1 -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME=createFluidEngine --bind"
 
 :: ==============================================================================
 :: ENVIRONMENT CHECKS
@@ -35,28 +33,41 @@ if %ERRORLEVEL% NEQ 0 goto ERR_PYTHON
 echo  [OK] Python found.
 
 :: 2. CHECK EMSCRIPTEN
-:: Logic moved outside of parentheses to prevent batch crashes
-if exist "%USERPROFILE%\emsdk\emsdk_env.bat" goto FOUND_EMSDK
-if exist "C:\emsdk\emsdk_env.bat" (
+if exist "%USERPROFILE%\emsdk\emsdk_env.bat" (
+    set "EMSDK_PATH=%USERPROFILE%\emsdk\emsdk_env.bat"
+) else if exist "C:\emsdk\emsdk_env.bat" (
     set "EMSDK_PATH=C:\emsdk\emsdk_env.bat"
-    goto SETUP_EMSDK
+) else (
+    goto ERR_EMSDK
 )
 
-:: If we get here, EMSDK is missing
-goto ERR_EMSDK
-
-:FOUND_EMSDK
-set "EMSDK_PATH=%USERPROFILE%\emsdk\emsdk_env.bat"
-
-:SETUP_EMSDK
 call :PROGRESS_BAR "Loading Emscripten SDK"
 call "%EMSDK_PATH%" >nul
 if %ERRORLEVEL% NEQ 0 goto ERR_EMSDK_LOAD
 echo  [OK] EMSDK Environment Loaded.
 
+:: Verify emcc is available
+where emcc >nul 2>&1
+if %ERRORLEVEL% NEQ 0 goto ERR_EMCC_NOT_FOUND
+echo  [OK] emcc command found.
+
+set "EMCC_FLAGS=-O3 -std=c++17 -msimd128 -pthread -s SHARED_MEMORY=1 -s MODULARIZE=1 -s EXPORT_NAME=createFluidEngine -s PTHREAD_POOL_SIZE=navigator.hardwareConcurrency -s ALLOW_MEMORY_GROWTH=1 -s ENVIRONMENT=web,worker --bind -Wno-pthreads-mem-growth"
+echo  [OK] Emscripten configuration set.
+
 :: 3. DIRECTORY SETUP
 if not exist "%OUT_DIR%" mkdir "%OUT_DIR%"
 if not exist "%SRC_DIR%" goto ERR_SRC
+
+:: ==============================================================================
+:: ASSET MANAGEMENT
+:: ==============================================================================
+echo  [*] Preparing web assets...
+copy /Y index.html "%OUT_DIR%\" >nul
+copy /Y style.css "%OUT_DIR%\" >nul
+copy /Y main.js "%OUT_DIR%\" >nul
+copy /Y renderer.js "%OUT_DIR%\" >nul
+copy /Y shaders.js "%OUT_DIR%\" >nul
+echo  [OK] All web assets copied to '%OUT_DIR%' directory.
 
 :: ==============================================================================
 :: SERVER MANAGEMENT
@@ -66,27 +77,34 @@ echo  [*] Configuring High-Performance Server...
 
 taskkill /F /FI "WINDOWTITLE eq TurbulenceServer" /T >nul 2>&1
 
-echo import http.server > server_optimized.py
-echo import socketserver >> server_optimized.py
-echo import sys >> server_optimized.py
-echo PORT = int(sys.argv[1]) >> server_optimized.py
-echo class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer): >> server_optimized.py
-echo     daemon_threads = True >> server_optimized.py
-echo     allow_reuse_address = True >> server_optimized.py
-echo class NoCacheHandler(http.server.SimpleHTTPRequestHandler): >> server_optimized.py
-echo     def end_headers(self): >> server_optimized.py
-echo         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0') >> server_optimized.py
-echo         self.send_header('Pragma', 'no-cache') >> server_optimized.py
-echo         self.send_header('Expires', '0') >> server_optimized.py
-echo         super().end_headers() >> server_optimized.py
-echo if __name__ == '__main__': >> server_optimized.py
-echo     socketserver.TCPServer.allow_reuse_address = True >> server_optimized.py
-echo     with ThreadedHTTPServer(("", PORT), NoCacheHandler) as httpd: >> server_optimized.py
-echo         print(f"Serving on port {PORT} with Multi-threaded Optimization") >> server_optimized.py
-echo         httpd.serve_forever() >> server_optimized.py
+(
+echo import http.server
+echo import socketserver
+echo import sys
+echo import os
+echo PORT = int(sys.argv[1])
+echo WEB_DIR = sys.argv[2]
+echo os.chdir(WEB_DIR)
+echo class ThreadedHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+echo     daemon_threads = True
+echo     allow_reuse_address = True
+echo class COOPCOEPHandler(http.server.SimpleHTTPRequestHandler):
+echo     def end_headers(self):
+echo         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+echo         self.send_header('Pragma', 'no-cache')
+echo         self.send_header('Expires', '0')
+echo         self.send_header('Cross-Origin-Opener-Policy', 'same-origin')
+echo         self.send_header('Cross-Origin-Embedder-Policy', 'require-corp')
+echo         super().end_headers()
+echo if __name__ == '__main__':
+echo     socketserver.TCPServer.allow_reuse_address = True
+echo     with ThreadedHTTPServer(("", PORT), COOPCOEPHandler) as httpd:
+echo         print(f"Serving '{WEB_DIR}' on port {PORT} with Multi-threaded Optimization")
+echo         httpd.serve_forever()
+) > server_optimized.py
 
 echo  [..] Starting Optimized Server on Port %PORT%...
-start "TurbulenceServer" /b python server_optimized.py %PORT% > "%SERVER_LOG%" 2>&1
+start "TurbulenceServer" /b python server_optimized.py %PORT% %OUT_DIR% > "%SERVER_LOG%" 2>&1
 echo  [OK] Server started (Threaded/No-Cache). Logs at: %SERVER_LOG%
 
 :: ==============================================================================
@@ -94,26 +112,26 @@ echo  [OK] Server started (Threaded/No-Cache). Logs at: %SERVER_LOG%
 :: ==============================================================================
 
 :BUILD_START
+cls
 echo.
 echo  ==============================================================================
-echo   COMPILATION PHASE
+echo   COMPILATION PHASE (%TIME%)
 echo  ==============================================================================
 echo.
 
 call :PROGRESS_BAR "Compiling C++ to WebAssembly"
 
 set "START_TIME=%TIME%"
-call emcc "%SOURCE_FILE%" %EMCC_FLAGS% -o "%OUTPUT_FILE%"
+emcc %EMCC_FLAGS% "%SOURCE_FILE%" -o "%OUTPUT_FILE%" >nul 2>&1
 
 if %ERRORLEVEL% NEQ 0 goto BUILD_FAIL
 
 call :SUCCESS "Build Complete!"
 echo      Time: %START_TIME% - %TIME%
 
-:: Launch Browser Only Once
 if not defined BROWSER_LAUNCHED (
     echo  [..] Opening Browser...
-    start http://localhost:%PORT%/%OUT_DIR%/
+    start http://localhost:%PORT%/
     set "BROWSER_LAUNCHED=YES"
 )
 
@@ -135,7 +153,7 @@ echo  ==========================================================================
 echo   WATCH MODE ACTIVE
 echo  ==============================================================================
 echo   [i] Watching: %SOURCE_FILE%
-echo   [i] Server:   http://localhost:%PORT%/%OUT_DIR%/
+echo   [i] Server:   http://localhost:%PORT%/
 echo   [i] Log:      %SERVER_LOG%
 echo   [i] Press Ctrl+C to exit.
 echo.
@@ -148,12 +166,14 @@ for %%f in ("%SOURCE_FILE%") do set CURRENT_TIMESTAMP=%%~tf
 
 if not "!LAST_TIMESTAMP!"=="!CURRENT_TIMESTAMP!" (
     echo.
-    echo  [!] Change detected. Recompiling...
+    echo  [!] Change detected at %TIME%. Recompiling...
     set "LAST_TIMESTAMP=!CURRENT_TIMESTAMP!"
     goto BUILD_START
 )
 
 goto WATCH_LOOP
+
+exit /b
 
 :: ==============================================================================
 :: ERROR HANDLERS
@@ -175,6 +195,13 @@ exit /b
 
 :ERR_EMSDK_LOAD
 call :ERROR "Failed to load EMSDK environment."
+pause
+exit /b
+
+:ERR_EMCC_NOT_FOUND
+call :ERROR "emcc command not found in PATH after loading SDK."
+echo      Your Emscripten installation might be corrupt or not activated.
+echo      Try running 'emsdk install latest' and 'emsdk activate latest' from the emsdk directory.
 pause
 exit /b
 

@@ -21,6 +21,7 @@ uniform sampler2D u_obs;
 uniform float u_dt;
 uniform vec2 u_sim_dim;
 uniform float u_seed;
+uniform vec4 u_boundary_conditions;
 
 out vec4 outNewPos;
 
@@ -33,27 +34,46 @@ void main() {
     vec4 pos = texelFetch(u_curr_pos, coord, 0);
     vec2 p = pos.xy;
     
-    vec2 uv = p / u_sim_dim;
+    vec2 uv1 = p / u_sim_dim;
+    vec2 v1 = vec2(texture(u_ux, uv1).r, texture(u_uy, uv1).r);
+
+    vec2 p_mid = p + v1 * u_dt * 0.5;
+    vec2 uv2 = p_mid / u_sim_dim;
+    vec2 v2 = vec2(texture(u_ux, uv2).r, texture(u_uy, uv2).r);
+
+    p += v2 * u_dt;
     
-    float ux = texture(u_ux, uv).r;
-    float uy = texture(u_uy, uv).r;
-    float obs = texture(u_obs, uv).r;
+    bool should_respawn = false;
 
-    p += vec2(ux, uy) * u_dt;
+    if (p.x < 0.0) {
+        if (u_boundary_conditions.x == 0.0) { p.x += u_sim_dim.x; }
+        else if (u_boundary_conditions.x > 3.5) { should_respawn = true; }
+        else { p.x = 0.0; }
+    } else if (p.x >= u_sim_dim.x) {
+        if (u_boundary_conditions.y == 0.0) { p.x -= u_sim_dim.x; }
+        else if (u_boundary_conditions.y > 3.5) { should_respawn = true; }
+        else { p.x = u_sim_dim.x - 1.0; }
+    }
 
-    if (p.x < 0.0) p.x += u_sim_dim.x;
-    if (p.x >= u_sim_dim.x) p.x -= u_sim_dim.x;
-    if (p.y < 0.0) p.y += u_sim_dim.y;
-    if (p.y >= u_sim_dim.y) p.y -= u_sim_dim.y;
+    if (p.y < 0.0) {
+        if (u_boundary_conditions.z == 0.0) { p.y += u_sim_dim.y; }
+        else if (u_boundary_conditions.z > 3.5) { should_respawn = true; }
+        else { p.y = 0.0; }
+    } else if (p.y >= u_sim_dim.y) {
+        if (u_boundary_conditions.w == 0.0) { p.y -= u_sim_dim.y; }
+        else if (u_boundary_conditions.w > 3.5) { should_respawn = true; }
+        else { p.y = u_sim_dim.y - 1.0; }
+    }
 
     vec2 newUV = p / u_sim_dim;
+    float oldObs = texture(u_obs, uv1).r;
     float newObs = texture(u_obs, newUV).r;
 
-    bool isDead = (pos.x < -10.0);
-    bool hitObstacle = (obs > 0.1) || (newObs > 0.1);
+    bool isDead = (pos.x < -100.0);
+    bool hitObstacle = (oldObs > 0.1) || (newObs > 0.1);
     bool randomRespawn = (rand(vec2(u_seed, float(coord.x) + float(coord.y)*u_sim_dim.x)) > 0.999);
 
-    if (isDead || hitObstacle || randomRespawn) {
+    if (isDead || hitObstacle || randomRespawn || should_respawn) {
         bool found = false;
         for(int i = 0; i < 15; i++) {
             float rx = rand(vec2(u_seed + float(i)*1.1, float(coord.x) + float(i)*0.3)) * u_sim_dim.x;
@@ -67,7 +87,7 @@ void main() {
             }
         }
         if (!found) {
-             p = vec2(-100.0, -100.0);
+             p = vec2(-200.0, -200.0);
         }
     }
 

@@ -202,7 +202,7 @@ class Renderer {
         return t;
     }
 
-    updateParticles(dt) {
+    updateParticles(dt, physicsParams) {
         if(this.particleCount === 0) return;
 
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.particleFBO);
@@ -230,6 +230,12 @@ class Renderer {
         this.gl.uniform1f(this.particleUpdateUniforms.dt, dt);
         this.gl.uniform2f(this.particleUpdateUniforms.simDim, this.width, this.height);
         this.gl.uniform1f(this.particleUpdateUniforms.seed, Math.random() * 100.0);
+        this.gl.uniform4f(this.particleUpdateUniforms.boundaries,
+            physicsParams.boundaryLeft,
+            physicsParams.boundaryRight,
+            physicsParams.boundaryBottom,
+            physicsParams.boundaryTop
+        );
 
         this.gl.bindVertexArray(this.quadVAO);
         this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);

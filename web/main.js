@@ -255,7 +255,7 @@ createFluidEngine().then(Module => {
         .then(data => {
             presetsData = data;
             const presetNames = Object.keys(data);
-            const presetFolder = gui.addFolder('Presets');
+            const presetFolder = gui.addFolder('Presets').close();
             presetFolder.add(params, 'preset', presetNames).name('Select Preset').onChange(name => {
                 if (presetsData[name]) {
                     applyPresetDeep(params, presetsData[name]);
@@ -749,7 +749,7 @@ createFluidEngine().then(Module => {
         renderer.draw(views, vizParamsWithParticles, params.postProcessing, obsDirty);
 
         if (!params.simulation.paused && particlesOn) {
-            renderer.updateParticles(params.simulation.dt);
+            renderer.updateParticles(params.simulation.dt, params.physics);
         }
 
         if (mouse.isOver && !mouse.isDragging && params.brush.type !== 'none') {

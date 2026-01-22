@@ -841,8 +841,191 @@ void FluidEngine::collideAndStream() {
         float n_idx_val = flowBehaviorIndex;
         float k_idx_val = consistencyIndex;
 
+        // SIMD Constants
+        const v128_t v_zero = wasm_f32x4_splat(0.0f);
+        const v128_t v_one = wasm_f32x4_splat(1.0f);
+        const v128_t v_two = wasm_f32x4_splat(2.0f);
+        const v128_t v_three = wasm_f32x4_splat(3.0f);
+        const v128_t v_four_point_five = wasm_f32x4_splat(4.5f);
+        const v128_t v_one_point_five = wasm_f32x4_splat(1.5f);
+        const v128_t v_half = wasm_f32x4_splat(0.5f);
+        
+        v128_t v_weights[9];
+        for(int k=0; k<9; ++k) v_weights[k] = wasm_f32x4_splat(weights[k]);
+
+        v128_t v_cx[9], v_cy[9];
+        for(int k=0; k<9; ++k) {
+            v_cx[k] = wasm_f32x4_splat((float)cx[k]);
+            v_cy[k] = wasm_f32x4_splat((float)cy[k]);
+        }
+
         for (int y = startY; y < endY; ++y) {
             for (int x = 0; x < w; ++x) {
+                bool do_simd = (x >= 1) && (x <= w - 5) && (y > 0) && (y < h - 1) && !useNonNewtonian;
+                
+                if (do_simd) {
+                    int idx = y * w + x;
+                    uint32_t b_check;
+                    std::memcpy(&b_check, &barriers[idx], 4);
+                    if (b_check != 0) do_simd = false;
+                    
+                    if (do_simd && spongeStrength > 0.0f && spongeWidth > 0) {
+                         bool in_sponge = (spongeLeft && x < spongeWidth) || 
+                                          (spongeRight && (x+3) >= w - spongeWidth) ||
+                                          (spongeTop && y >= h - spongeWidth) || 
+                                          (spongeBottom && y < spongeWidth);
+                         if (in_sponge) do_simd = false;
+                    }
+                }
+
+                if (do_simd) {
+                    int idx = y * w + x;
+                    
+                    v128_t v_f[9];
+                    for(int k=0; k<9; ++k) v_f[k] = wasm_v128_load(&f[k][idx]);
+
+                    v128_t v_rho = v_f[0];
+                    v128_t v_ux = wasm_f32x4_mul(v_f[0], v_cx[0]);
+                    v128_t v_uy = wasm_f32x4_mul(v_f[0], v_cy[0]);
+                    
+                    for(int k=1; k<9; ++k) {
+                        v_rho = wasm_f32x4_add(v_rho, v_f[k]);
+                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[k], v_cx[k]));
+                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[k], v_cy[k]));
+                    }
+                    
+                    v128_t v_inv_rho = wasm_f32x4_div(v_one, v_rho);
+                    v128_t v_u_val = wasm_f32x4_mul(v_ux, v_inv_rho);
+                    v128_t v_v_val = wasm_f32x4_mul(v_uy, v_inv_rho);
+                    
+                    wasm_v128_store(&rho[idx], v_rho);
+
+                    v128_t v_fx = wasm_v128_load(&forceX[idx]);
+                    v128_t v_fy = wasm_v128_load(&forceY[idx]);
+                    v128_t v_gx = wasm_f32x4_splat(gravityX);
+                    v128_t v_gy = wasm_f32x4_splat(gravityY);
+                    
+                    v_fx = wasm_f32x4_add(v_fx, v_gx);
+                    v_fy = wasm_f32x4_add(v_fy, v_gy);
+
+                    if (thermalExpansion != 0.0f) {
+                        v128_t v_temp = wasm_v128_load(&temperature[idx]);
+                        v128_t v_refT = wasm_f32x4_splat(referenceTemperature);
+                        v128_t v_exp = wasm_f32x4_splat(thermalExpansion);
+                        v128_t v_buoyancy = wasm_f32x4_mul(v_gy, wasm_f32x4_mul(v_exp, wasm_f32x4_sub(v_temp, v_refT)));
+                        v_fy = wasm_f32x4_add(v_fy, v_buoyancy);
+                    }
+
+                    v128_t v_dt = wasm_f32x4_splat(dt);
+                    v128_t v_porosity = wasm_v128_load(&porosity[idx]);
+                    v128_t v_globalDrag = wasm_f32x4_splat(globalDrag);
+                    v128_t v_porosityDrag = wasm_f32x4_splat(porosityDrag);
+                    
+                    v128_t v_drag = wasm_f32x4_add(v_globalDrag, wasm_f32x4_mul(v_porosityDrag, wasm_f32x4_sub(v_one, v_porosity)));
+                    v128_t v_damp = wasm_f32x4_sub(v_one, v_drag);
+                    v_damp = wasm_f32x4_max(v_damp, v_zero);
+
+                    v128_t v_u_eq = wasm_f32x4_mul(wasm_f32x4_add(v_u_val, wasm_f32x4_mul(v_fx, v_dt)), v_damp);
+                    v128_t v_v_eq = wasm_f32x4_mul(wasm_f32x4_add(v_v_val, wasm_f32x4_mul(v_fy, v_dt)), v_damp);
+                    
+                    v128_t v_maxVel = wasm_f32x4_splat(maxVelocity);
+                    v128_t v_speedSq = wasm_f32x4_add(wasm_f32x4_mul(v_u_eq, v_u_eq), wasm_f32x4_mul(v_v_eq, v_v_eq));
+                    v128_t v_speed = wasm_f32x4_sqrt(v_speedSq);
+                    v128_t v_over = wasm_f32x4_gt(v_speed, v_maxVel);
+                    
+                    if (wasm_v128_any_true(v_over)) {
+                        v128_t v_ratio = wasm_f32x4_div(v_maxVel, v_speed);
+                        v_u_eq = wasm_v128_bitselect(wasm_f32x4_mul(v_u_eq, v_ratio), v_u_eq, v_over);
+                        v_v_eq = wasm_v128_bitselect(wasm_f32x4_mul(v_v_eq, v_ratio), v_v_eq, v_over);
+                    }
+
+                    wasm_v128_store(&ux[idx], v_u_eq);
+                    wasm_v128_store(&uy[idx], v_v_eq);
+
+                    v128_t v_omega = wasm_f32x4_splat(omega);
+                    v128_t v_feq[9];
+
+                    v128_t v_u2 = wasm_f32x4_add(wasm_f32x4_mul(v_u_eq, v_u_eq), wasm_f32x4_mul(v_v_eq, v_v_eq));
+                    v128_t v_u2_term = wasm_f32x4_mul(v_one_point_five, v_u2);
+
+                    for(int k=0; k<9; ++k) {
+                         v128_t v_eu = wasm_f32x4_add(wasm_f32x4_mul(v_cx[k], v_u_eq), wasm_f32x4_mul(v_cy[k], v_v_eq));
+                         v128_t v_t1 = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_three, v_eu));
+                         v128_t v_t2 = wasm_f32x4_sub(wasm_f32x4_mul(v_four_point_five, wasm_f32x4_mul(v_eu, v_eu)), v_u2_term);
+                         v_feq[k] = wasm_f32x4_mul(v_weights[k], wasm_f32x4_mul(v_rho, wasm_f32x4_add(v_t1, v_t2)));
+                    }
+
+                    if (useTempVisc || useSmagorinsky) {
+                        v128_t v_tau = wasm_f32x4_div(v_one, v_omega);
+                        v128_t v_nu = wasm_f32x4_div(wasm_f32x4_sub(v_tau, v_half), v_three);
+                        
+                        if (useTempVisc) {
+                             v128_t v_T = wasm_v128_load(&temperature[idx]);
+                             v128_t v_tvisc = wasm_f32x4_splat(temperatureViscosity);
+                             v128_t v_factor = wasm_f32x4_div(v_one, wasm_f32x4_add(v_one, wasm_f32x4_mul(v_tvisc, v_T)));
+                             v_nu = wasm_f32x4_mul(v_nu, v_factor);
+                        }
+
+                        if (useSmagorinsky) {
+                            v128_t v_Qxx = v_zero;
+                            v128_t v_Qxy = v_zero;
+                            v128_t v_Qyy = v_zero;
+                            
+                            for(int k=0; k<9; ++k) {
+                                v128_t v_fneq = wasm_f32x4_sub(v_f[k], v_feq[k]);
+                                v_Qxx = wasm_f32x4_add(v_Qxx, wasm_f32x4_mul(wasm_f32x4_mul(v_cx[k], v_cx[k]), v_fneq));
+                                v_Qxy = wasm_f32x4_add(v_Qxy, wasm_f32x4_mul(wasm_f32x4_mul(v_cx[k], v_cy[k]), v_fneq));
+                                v_Qyy = wasm_f32x4_add(v_Qyy, wasm_f32x4_mul(wasm_f32x4_mul(v_cy[k], v_cy[k]), v_fneq));
+                            }
+                            
+                            v128_t v_magS_sq = wasm_f32x4_add(wasm_f32x4_mul(v_Qxx, v_Qxx), 
+                                                wasm_f32x4_add(wasm_f32x4_mul(v_two, wasm_f32x4_mul(v_Qxy, v_Qxy)), 
+                                                               wasm_f32x4_mul(v_Qyy, v_Qyy)));
+                            v128_t v_magS = wasm_f32x4_sqrt(v_magS_sq);
+
+                            v128_t v_smag = wasm_f32x4_splat(smagorinskyConstant);
+                            v128_t v_eddy = wasm_f32x4_mul(wasm_f32x4_mul(v_smag, v_smag), v_magS);
+                            v_nu = wasm_f32x4_add(v_nu, v_eddy);
+                        }
+                        
+                        v128_t v_tau_eff = wasm_f32x4_add(wasm_f32x4_mul(v_three, v_nu), v_half);
+                        v_omega = wasm_f32x4_div(v_one, v_tau_eff);
+                        v_omega = wasm_f32x4_max(v_omega, wasm_f32x4_splat(0.05f));
+                        v_omega = wasm_f32x4_min(v_omega, wasm_f32x4_splat(1.95f));
+                    }
+
+                    v128_t v_one_minus_omega = wasm_f32x4_sub(v_one, v_omega);
+                    
+                    for (int k = 0; k < 9; ++k) {
+                        v128_t v_out = wasm_f32x4_add(wasm_f32x4_mul(v_f[k], v_one_minus_omega), 
+                                                      wasm_f32x4_mul(v_feq[k], v_omega));
+                        
+                        float out_vals[4];
+                        wasm_v128_store(out_vals, v_out);
+                        
+                        int dest_base = idx + cx[k] + cy[k] * w;
+                        
+                        int n_idx_0 = dest_base;
+                        if (!barriers[n_idx_0]) f_new[k][n_idx_0] = out_vals[0];
+                        else f_new[opp[k]][idx] = out_vals[0];
+
+                        int n_idx_1 = dest_base + 1;
+                        if (!barriers[n_idx_1]) f_new[k][n_idx_1] = out_vals[1];
+                        else f_new[opp[k]][idx + 1] = out_vals[1];
+
+                        int n_idx_2 = dest_base + 2;
+                        if (!barriers[n_idx_2]) f_new[k][n_idx_2] = out_vals[2];
+                        else f_new[opp[k]][idx + 2] = out_vals[2];
+
+                        int n_idx_3 = dest_base + 3;
+                        if (!barriers[n_idx_3]) f_new[k][n_idx_3] = out_vals[3];
+                        else f_new[opp[k]][idx + 3] = out_vals[3];
+                    }
+                    
+                    x += 3;
+                    continue;
+                }
+
                 int idx = y * w + x;
                 if (barriers[idx]) {
                     rho[idx] = 1.0f;

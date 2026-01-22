@@ -2,8 +2,9 @@
     "Default": {
         "simulation": { "resolutionScale": 300, "iterations": 2, "dt": 0.95 },
         "physics": {
-            "viscosity": 0.8, "decay": 0.001, "velocityDissipation": 0.0, "boundary": 1,
-            "gravityX": 0, "gravityY": 0, "buoyancy": 1.0, "thermalDiffusivity": 0.001,
+            "viscosity": 0.8, "decay": 0.001, "globalDrag": 0.0,
+            "boundaryLeft": 1, "boundaryRight": 1, "boundaryTop": 1, "boundaryBottom": 1,
+            "gravityX": 0, "gravityY": 0, "thermalExpansion": 0.1, "thermalDiffusivity": 0.001,
             "vorticityConfinement": 0.1, "maxVelocity": 0.57, "smagorinsky": 0.05,
             "tempViscosity": 0.0, "rheologyIndex": 1.0, "rheologyConsistency": 0.0
         },
@@ -29,8 +30,9 @@
     "Tap Water": {
         "simulation": { "resolutionScale": 300, "iterations": 2, "dt": 0.95 },
         "physics": {
-            "viscosity": 0.015, "decay": 0.0, "velocityDissipation": 0.002, "boundary": 1,
-            "gravityX": 0, "gravityY": -0.5, "buoyancy": 0.5, "thermalDiffusivity": 0.0001,
+            "viscosity": 0.015, "decay": 0.0, "globalDrag": 0.002,
+            "boundaryLeft": 1, "boundaryRight": 1, "boundaryTop": 1, "boundaryBottom": 1,
+            "gravityX": 0, "gravityY": -0.5, "thermalExpansion": 0.5, "thermalDiffusivity": 0.0001,
             "vorticityConfinement": 0.0, "maxVelocity": 0.57, "smagorinsky": 0.01,
             "tempViscosity": 0.0, "rheologyIndex": 1.0, "rheologyConsistency": 0.0
         },
@@ -46,18 +48,18 @@
         "particles": { "show": true, "count": 600000, "size": 0.04, "opacity": 0.35, "color": "#d0e4ff" },
         "postProcessing": { "enabled": false, "mode": "Gaussian Blur", "radius": 1.5, "intensity": 0.7 },
         "brush": {
-            "type": "combined", "size": 15, "falloff": 0.2, "gaussianFalloff": 2.0,
-            "shape": "Circle", "falloffType": "Smooth", "angle": 0.0, "aspectRatio": 1.0,
-            "vortexDirection": 1, "erase": false, "velocityStrength": 2.5,
-            "densityStrength": 1.0, "temperatureStrength": 2.0, "noiseStrength": 0.5,
-            "dragStrength": 0.1, "expansionStrength": 0.5
+            "type": "combined", "size": 15, "falloff": 0.2,
+            "shape": "Circle", "vortexDirection": 1, "erase": false,
+            "velocityStrength": 2.5, "densityStrength": 1.0, "temperatureStrength": 2.0,
+            "noiseStrength": 0.5, "dragStrength": 0.1, "expansionStrength": 0.5
         }
     },
     "Molten Gold": {
         "simulation": { "resolutionScale": 300, "iterations": 2, "dt": 1.0 },
         "physics": {
-            "viscosity": 3.2, "decay": 0.005, "velocityDissipation": 0.001, "boundary": 1,
-            "gravityX": 0, "gravityY": -1.2, "buoyancy": 2.5, "thermalDiffusivity": 0.005,
+            "viscosity": 3.2, "decay": 0.005, "globalDrag": 0.001,
+            "boundaryLeft": 1, "boundaryRight": 1, "boundaryTop": 1, "boundaryBottom": 1,
+            "gravityX": 0, "gravityY": -1.2, "thermalExpansion": 2.5, "thermalDiffusivity": 0.005,
             "vorticityConfinement": 0.02, "maxVelocity": 0.57, "smagorinsky": 0.0,
             "tempViscosity": 1.5, "rheologyIndex": 1, "rheologyConsistency": 0
         },
@@ -74,17 +76,17 @@
         "postProcessing": { "enabled": true, "mode": "Gaussian Blur", "radius": 0.8, "intensity": 0.5 },
         "brush": {
             "type": "combined", "size": 20, "falloff": 0.3, "gaussianFalloff": 3,
-            "shape": "Circle", "falloffType": "Smooth", "angle": 0, "aspectRatio": 1,
-            "vortexDirection": 1, "erase": false, "velocityStrength": 0.8,
-            "densityStrength": 0.5, "temperatureStrength": 8, "noiseStrength": 0.1,
-            "dragStrength": 0.5, "expansionStrength": -0.2
+            "shape": "Circle", "angle": 0, "aspectRatio": 1, "vortexDirection": 1,
+            "erase": false, "velocityStrength": 0.8, "densityStrength": 0.5,
+            "temperatureStrength": 8, "noiseStrength": 0.1, "dragStrength": 0.5, "expansionStrength": -0.2
         }
     },
     "Superfluid Helium": {
         "simulation": { "resolutionScale": 300, "iterations": 2, "dt": 0.1 },
         "physics": {
-            "viscosity": 0.001, "decay": 0, "velocityDissipation": 0, "boundary": 0,
-            "gravityX": 0, "gravityY": 0, "buoyancy": 1.2, "thermalDiffusivity": 0.0005,
+            "viscosity": 0.001, "decay": 0, "globalDrag": 0.0,
+            "boundaryLeft": 0, "boundaryRight": 0, "boundaryTop": 0, "boundaryBottom": 0,
+            "gravityX": 0, "gravityY": 0, "thermalExpansion": 1.2, "thermalDiffusivity": 0.0005,
             "vorticityConfinement": 0.85, "maxVelocity": 0.57, "smagorinsky": 0.0,
             "tempViscosity": 0, "rheologyIndex": 1, "rheologyConsistency": 0
         },

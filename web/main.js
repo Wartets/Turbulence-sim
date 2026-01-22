@@ -6,6 +6,11 @@ createFluidEngine().then(Module => {
     const fpsCounter = document.getElementById('fps-counter');
     let lastTime = 0;
     let frameCount = 0;
+    
+    let presetsData = {};
+    let wallVC = {};
+    let inflowC = {};
+    let inflowFolder, wallFolder;
 
     const params = {
         preset: 'Default',
@@ -20,7 +25,7 @@ createFluidEngine().then(Module => {
         physics: {
             viscosity: 0.8,
             decay: 0.001,
-            velocityDissipation: 0.0,
+            globalDrag: 0.0,
             boundaryLeft: 1,
             boundaryRight: 1,
             boundaryTop: 1,
@@ -34,7 +39,8 @@ createFluidEngine().then(Module => {
             movingWallVelocityBottom: 0.0,
             gravityX: 0,
             gravityY: 0,
-            buoyancy: 1.0,
+            thermalExpansion: 0.1,
+            referenceTemperature: 0.0,
             thermalDiffusivity: 0.001,
             vorticityConfinement: 0.1,
             maxVelocity: 0.57,
@@ -42,6 +48,9 @@ createFluidEngine().then(Module => {
             tempViscosity: 0.0,
             rheologyIndex: 1.0,
             rheologyConsistency: 0.0,
+            porosityDrag: 0.5,
+            spongeStrength: 0.05,
+            spongeWidth: 20,
         },
 
         features: {
@@ -51,6 +60,10 @@ createFluidEngine().then(Module => {
             enableSmagorinsky: true,
             enableTempViscosity: false,
             enableNonNewtonian: false,
+            spongeLeft: false,
+            spongeRight: false,
+            spongeTop: false,
+            spongeBottom: false,
         },
         
         visualization: {
@@ -97,6 +110,7 @@ createFluidEngine().then(Module => {
             noiseStrength: 0.9,
             dragStrength: 0.2,
             expansionStrength: 1.0,
+            porosityStrength: 0.05,
         },
 
         reset: () => { 
@@ -116,7 +130,11 @@ createFluidEngine().then(Module => {
 
     const updateBuoyancy = () => {
         if (!engine) return;
-        engine.setBuoyancy(params.features.enableBuoyancy ? params.physics.buoyancy : 0);
+        if (params.features.enableBuoyancy) {
+            engine.setThermalProperties(params.physics.thermalExpansion, params.physics.referenceTemperature);
+        } else {
+            engine.setThermalProperties(0, 0);
+        }
     };
 
     const updateVorticity = () => {
@@ -144,9 +162,58 @@ createFluidEngine().then(Module => {
         }
     };
 
-    const gui = new lil.GUI({ title: 'Turbulence Simulation' });
+    const updateBoundaryControls = () => {
+        const bLeft = parseInt(params.physics.boundaryLeft);
+        const bRight = parseInt(params.physics.boundaryRight);
+        const bTop = parseInt(params.physics.boundaryTop);
+        const bBottom = parseInt(params.physics.boundaryBottom);
+
+        const needsInflow = bLeft === 4 || bRight === 4 || bTop === 4 || bBottom === 4;
+        inflowFolder.show(needsInflow);
+
+        const isLeftMoving = bLeft === 3;
+        const isRightMoving = bRight === 3;
+        const isTopMoving = bTop === 3;
+        const isBottomMoving = bBottom === 3;
+
+        const needsWall = isLeftMoving || isRightMoving || isTopMoving || isBottomMoving;
+        wallFolder.show(needsWall);
+
+        if (wallVC.left) wallVC.left.show(isLeftMoving);
+        if (wallVC.right) wallVC.right.show(isRightMoving);
+        if (wallVC.top) wallVC.top.show(isTopMoving);
+        if (wallVC.bottom) wallVC.bottom.show(isBottomMoving);
+    };
+
+    const updateBoundaries = () => {
+        if (!engine) return;
+        engine.setBoundaryConditions(
+            parseInt(params.physics.boundaryLeft),
+            parseInt(params.physics.boundaryRight),
+            parseInt(params.physics.boundaryTop),
+            parseInt(params.physics.boundaryBottom)
+        );
+        updateBoundaryControls();
+    };
     
-    let presetsData = {};
+    const updateSponge = () => {
+        if (!engine) return;
+        engine.setSpongeProperties(params.physics.spongeStrength, params.physics.spongeWidth);
+        engine.setSpongeBoundaries(
+            params.features.spongeLeft,
+            params.features.spongeRight,
+            params.features.spongeTop,
+            params.features.spongeBottom
+        );
+    };
+    
+    const updateWall = (side, value) => {
+        if(!engine) return;
+        if(side === 'Top' || side === 'Bottom') engine.setMovingWallVelocity(side === 'Top' ? 2 : 3, value, 0);
+        else engine.setMovingWallVelocity(side === 'Left' ? 0 : 1, 0, value);
+    };
+
+    const gui = new lil.GUI({ title: 'Turbulence Simulation' });
 
     const findController = (root, obj, property) => {
         let found = null;
@@ -215,7 +282,7 @@ createFluidEngine().then(Module => {
 
     physicsFolder.add(params.physics, 'viscosity', 0.001, 10).name('Viscosity').step(0.001).onChange(v => engine && engine.setViscosity(v));
     physicsFolder.add(params.physics, 'decay', 0.0, 0.05).name('Dye Dissipation').step(0.0001).onChange(d => engine && engine.setDecay(d));
-    physicsFolder.add(params.physics, 'velocityDissipation', 0.0, 0.1).name('Velocity Drag').step(0.0001).onChange(d => engine && engine.setVelocityDissipation(d));
+    physicsFolder.add(params.physics, 'globalDrag', 0.0, 0.1).name('Global Drag').step(0.0001).onChange(d => engine && engine.setGlobalDrag(d));
     const boundaryTypes = {
         'Periodic': 0,
         'No-Slip Wall': 1,
@@ -226,43 +293,6 @@ createFluidEngine().then(Module => {
     };
 
     const boundaryFolder = physicsFolder.addFolder('Boundaries').close();
-    let wallVC = {};
-    let inflowC = {};
-    let inflowFolder, wallFolder;
-
-    const updateBoundaryControls = () => {
-        const bLeft = parseInt(params.physics.boundaryLeft);
-        const bRight = parseInt(params.physics.boundaryRight);
-        const bTop = parseInt(params.physics.boundaryTop);
-        const bBottom = parseInt(params.physics.boundaryBottom);
-
-        const needsInflow = bLeft === 4 || bRight === 4 || bTop === 4 || bBottom === 4;
-        inflowFolder.show(needsInflow);
-
-        const isLeftMoving = bLeft === 3;
-        const isRightMoving = bRight === 3;
-        const isTopMoving = bTop === 3;
-        const isBottomMoving = bBottom === 3;
-
-        const needsWall = isLeftMoving || isRightMoving || isTopMoving || isBottomMoving;
-        wallFolder.show(needsWall);
-
-        if (wallVC.left) wallVC.left.show(isLeftMoving);
-        if (wallVC.right) wallVC.right.show(isRightMoving);
-        if (wallVC.top) wallVC.top.show(isTopMoving);
-        if (wallVC.bottom) wallVC.bottom.show(isBottomMoving);
-    };
-
-    const updateBoundaries = () => {
-        if (!engine) return;
-        engine.setBoundaryConditions(
-            parseInt(params.physics.boundaryLeft),
-            parseInt(params.physics.boundaryRight),
-            parseInt(params.physics.boundaryTop),
-            parseInt(params.physics.boundaryBottom)
-        );
-        updateBoundaryControls();
-    };
     
     boundaryFolder.add(params.physics, 'boundaryLeft', boundaryTypes).name('Left').onChange(updateBoundaries);
     boundaryFolder.add(params.physics, 'boundaryRight', boundaryTypes).name('Right').onChange(updateBoundaries);
@@ -276,16 +306,19 @@ createFluidEngine().then(Module => {
     inflowC.rho = inflowFolder.add(params.physics, 'inflowDensity', 0.1, 5.0).name('Density').onChange(updateInflow);
 
     wallFolder = boundaryFolder.addFolder('Moving Wall Velocity');
-    const updateWall = (side, value) => {
-        if(!engine) return;
-        if(side === 'Top' || side === 'Bottom') engine.setMovingWallVelocity(side === 'Top' ? 2 : 3, value, 0);
-        else engine.setMovingWallVelocity(side === 'Left' ? 0 : 1, 0, value);
-    };
     wallVC.left = wallFolder.add(params.physics, 'movingWallVelocityLeft', -0.5, 0.5).name('Left Wall (vy)').step(0.01).onChange(v => updateWall('Left', v));
     wallVC.right = wallFolder.add(params.physics, 'movingWallVelocityRight', -0.5, 0.5).name('Right Wall (vy)').step(0.01).onChange(v => updateWall('Right', v));
     wallVC.top = wallFolder.add(params.physics, 'movingWallVelocityTop', -0.5, 0.5).name('Top Wall (vx)').step(0.01).onChange(v => updateWall('Top', v));
     wallVC.bottom = wallFolder.add(params.physics, 'movingWallVelocityBottom', -0.5, 0.5).name('Bottom Wall (vx)').step(0.01).onChange(v => updateWall('Bottom', v));
     
+    const spongeFolder = boundaryFolder.addFolder('Sponge Zones (Absorbing)');
+    spongeFolder.add(params.physics, 'spongeStrength', 0, 1.0).name('Strength').step(0.001).onChange(updateSponge);
+    spongeFolder.add(params.physics, 'spongeWidth', 0, 100, 1).name('Width (cells)').onChange(updateSponge);
+    spongeFolder.add(params.features, 'spongeLeft').name('Enable Left').onChange(updateSponge);
+    spongeFolder.add(params.features, 'spongeRight').name('Enable Right').onChange(updateSponge);
+    spongeFolder.add(params.features, 'spongeTop').name('Enable Top').onChange(updateSponge);
+    spongeFolder.add(params.features, 'spongeBottom').name('Enable Bottom').onChange(updateSponge);
+
     const advancedPhysicsFolder = physicsFolder.addFolder('Advanced').close();
     advancedPhysicsFolder.add(params.physics, 'maxVelocity', 0.01, 1.0).name('Max Velocity (Stability)').step(0.01).onChange(v => engine && engine.setMaxVelocity(v));
 
@@ -319,11 +352,13 @@ createFluidEngine().then(Module => {
         updateVorticity();
     });
 
-    const buoyancyFolder = physicsFolder.addFolder('Buoyancy').close();
-    const buoyancyController = buoyancyFolder.add(params.physics, 'buoyancy', 0, 5.0).name('Strength').step(0.01).onChange(updateBuoyancy);
-    buoyancyFolder.add(params.physics, 'thermalDiffusivity', 0.0, 0.05).name('Diffusivity').step(0.0001).onChange(d => engine && engine.setThermalDiffusivity(d));
-    buoyancyFolder.add(params.features, 'enableBuoyancy').name('Enable').onChange(enabled => {
-        buoyancyController.enable(enabled);
+    const thermoBuoyancyFolder = physicsFolder.addFolder('Buoyancy (Boussinesq)').close();
+    const expansionController = thermoBuoyancyFolder.add(params.physics, 'thermalExpansion', -1.0, 1.0).name('Thermal Expansion').step(0.001).onChange(updateBuoyancy);
+    const refTempController = thermoBuoyancyFolder.add(params.physics, 'referenceTemperature', -10.0, 10.0).name('Reference Temp').step(0.1).onChange(updateBuoyancy);
+    thermoBuoyancyFolder.add(params.physics, 'thermalDiffusivity', 0.0, 0.05).name('Diffusivity').step(0.0001).onChange(d => engine && engine.setThermalDiffusivity(d));
+    thermoBuoyancyFolder.add(params.features, 'enableBuoyancy').name('Enable').onChange(enabled => {
+        expansionController.enable(enabled);
+        refTempController.enable(enabled);
         updateBuoyancy();
     });
 
@@ -331,6 +366,9 @@ createFluidEngine().then(Module => {
     rheologyFolder.add(params.features, 'enableNonNewtonian').name('Enable').onChange(updateRheology);
     rheologyFolder.add(params.physics, 'rheologyIndex', 0.1, 2.0).name('Flow Index (n)').step(0.01).onChange(updateRheology);
     rheologyFolder.add(params.physics, 'rheologyConsistency', 0.0, 5.0).name('Consistency (k)').step(0.01).onChange(updateRheology);
+
+    const porousFolder = physicsFolder.addFolder('Porous Media').close();
+    porousFolder.add(params.physics, 'porosityDrag', 0, 2.0).name('Drag Coefficient').step(0.01).onChange(d => engine.setPorosityDrag(d));
 
     const viewFolder = gui.addFolder('Visualization');
     viewFolder.add(params.visualization, 'mode', { 'Vorticity': 0, 'Velocity': 1, 'Density': 2, 'Temperature': 3, 'Pressure': 4 }).name('Field');
@@ -346,7 +384,7 @@ createFluidEngine().then(Module => {
     viewFolder.addColor(params.visualization, 'backgroundColor').name('Background Color');
     viewFolder.add(params.visualization, 'vorticityBipolar').name('Bipolar Map');
     
-    const particleFolder = viewFolder.addFolder('Particles');
+    const particleFolder = viewFolder.addFolder('Particles').close();
     particleFolder.add(params.particles, 'show').name('Show Particles').listen();
     particleFolder.add(params.particles, 'count', 0, 1000000, 10000).name('Particle Count').onChange(count => {
         if(renderer) renderer.initParticles(count);
@@ -362,7 +400,7 @@ createFluidEngine().then(Module => {
     ppFolder.add(params.postProcessing, 'intensity', 0.0, 10).name('Intensity');
 
     const inputFolder = gui.addFolder('Interaction');
-    const brushTypeController = inputFolder.add(params.brush, 'type', ['none', 'combined', 'velocity', 'density', 'temperature', 'vortex', 'expansion', 'noise', 'drag', 'obstacle']).name('Brush Mode');
+    const brushTypeController = inputFolder.add(params.brush, 'type', ['none', 'combined', 'velocity', 'density', 'temperature', 'vortex', 'expansion', 'noise', 'drag', 'obstacle', 'porosity']).name('Brush Mode');
     inputFolder.add(params.brush, 'size', 1, 100).name('Radius');
     inputFolder.add(params.brush, 'shape', ['Circle', 'Square', 'Diamond']).name('Shape');
     const falloffTypeController = inputFolder.add(params.brush, 'falloffType', ['Smooth', 'Gaussian']).name('Falloff Type');
@@ -374,7 +412,8 @@ createFluidEngine().then(Module => {
     const noiseStrengthController = inputFolder.add(params.brush, 'noiseStrength', 0.01, 10.0).name('Noise Strength').step(0.01);
     const expansionStrengthController = inputFolder.add(params.brush, 'expansionStrength', -5.0, 5.0).name('Expansion Strength').step(0.01);
     const dragStrengthController = inputFolder.add(params.brush, 'dragStrength', 0.0, 1.0).name('Drag Factor').step(0.01);
-    
+    const porosityStrengthController = inputFolder.add(params.brush, 'porosityStrength', 0.0, 1.0).name('Porosity Strength').step(0.01);
+
     const falloffController = inputFolder.add(params.brush, 'falloff', 0, 1).name('Edge Falloff').step(0.01);
     const gaussianFalloffController = inputFolder.add(params.brush, 'gaussianFalloff', 0.1, 100.0).name('Gaussian Falloff').step(0.1);
     const eraseController = inputFolder.add(params.brush, 'erase').name('Eraser');
@@ -390,6 +429,7 @@ createFluidEngine().then(Module => {
         const isExpansion = type === 'expansion';
         const isNoise = type === 'noise';
         const isDrag = type === 'drag';
+        const isPorosity = type === 'porosity';
         
         const isVelocity = type === 'velocity' || type === 'combined';
         const isDensity = type === 'density' || type === 'combined';
@@ -409,12 +449,16 @@ createFluidEngine().then(Module => {
         const isGaussian = falloffType === 'Gaussian';
         falloffController.show(!isNone && !isObstacle && !isGaussian);
         gaussianFalloffController.show(!isNone && !isObstacle && isGaussian);
+        
+        porosityStrengthController.show(!isNone && isPorosity);
 
         vortexController.show(!isNone && isVortex);
         eraseController.show(!isNone);
 
         if (isObstacle) {
             eraseController.name('Remove Obstacle');
+        } else if (isPorosity) {
+            eraseController.name('Decrease Porosity');
         } else {
             eraseController.name('Eraser');
         }
@@ -464,7 +508,7 @@ createFluidEngine().then(Module => {
 
         engine.setViscosity(params.physics.viscosity);
         engine.setDecay(params.physics.decay);
-        engine.setVelocityDissipation(params.physics.velocityDissipation);
+        engine.setGlobalDrag(params.physics.globalDrag);
         engine.setDt(params.simulation.dt);
         updateBoundaries();
         updateInflow();
@@ -474,6 +518,8 @@ createFluidEngine().then(Module => {
         updateWall('Bottom', params.physics.movingWallVelocityBottom);
         engine.setThermalDiffusivity(params.physics.thermalDiffusivity);
         engine.setMaxVelocity(params.physics.maxVelocity);
+        engine.setPorosityDrag(params.physics.porosityDrag);
+        updateSponge();
         
         if (typeof engine.setThreadCount === 'function') {
             engine.setThreadCount(params.simulation.threads);
@@ -485,6 +531,9 @@ createFluidEngine().then(Module => {
         updateGravity();
         updateBuoyancy();
         updateVorticity();
+        updateRheology();
+        updateSmagorinsky();
+        updateTempViscosity();
         
         renderer = new Renderer(canvas, simWidth, simHeight);
         renderer.initParticles(params.particles.count);
@@ -547,7 +596,9 @@ createFluidEngine().then(Module => {
                 if (brush.erase) {
                     engine.clearRegion(simX, simY, radius);
                 } else {
-                    if (brush.type === 'vortex') {
+                    if (brush.type === 'porosity') {
+                        engine.applyPorosityBrush(simX, simY, radius, brush.porosityStrength, !brush.erase, currentFalloff, brush.angle, brush.aspectRatio, shapeInt, falloffInt);
+                    } else if (brush.type === 'vortex') {
                         const str = brush.velocityStrength * brush.vortexDirection;
                         engine.applyDimensionalBrush(simX, simY, radius, 0, str, currentFalloff, brush.angle, brush.aspectRatio, shapeInt, falloffInt);
                     } else if (brush.type === 'expansion') {

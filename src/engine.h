@@ -17,14 +17,14 @@ public:
     void addForce(int x, int y, float fx, float fy);
     void setViscosity(float viscosity);
     void setDecay(float decay);
-    void setVelocityDissipation(float dissipation);
+    void setGlobalDrag(float drag);
     
     void setBoundaryConditions(int left, int right, int top, int bottom);
     void setInflowProperties(float vx, float vy, float rho);
     void setMovingWallVelocity(int side, float vx, float vy);
     void setDt(float dt);
     void setGravity(float gx, float gy);
-    void setBuoyancy(float b);
+    void setThermalProperties(float expansion, float refTemp);
     void setThermalDiffusivity(float td);
     void setVorticityConfinement(float vc);
     void setMaxVelocity(float mv);
@@ -34,6 +34,10 @@ public:
     
     void setFlowBehaviorIndex(float n);
     void setConsistencyIndex(float k);
+
+    void setPorosityDrag(float drag);
+    void setSpongeProperties(float strength, int width);
+    void setSpongeBoundaries(bool left, bool right, bool top, bool bottom);
 
     void setThreadCount(int count);
     
@@ -45,6 +49,7 @@ public:
     emscripten::val getBarrierView();
     emscripten::val getDyeView();
     emscripten::val getTemperatureView();
+    emscripten::val getPorosityView();
 
     void reset();
     void addDensity(int x, int y, float amount);
@@ -53,6 +58,7 @@ public:
     void addObstacle(int x, int y, int radius, bool remove, float angle, float aspectRatio, int shape);
     void applyDimensionalBrush(int x, int y, int radius, int mode, float strength, float falloff, float angle, float aspectRatio, int shape, int falloffMode);
     void applyGenericBrush(int x, int y, int radius, float fx, float fy, float densityAmt, float tempAmt, float falloff, float angle, float aspectRatio, int shape, int falloffMode);
+    void applyPorosityBrush(int x, int y, int radius, float strength, bool add, float falloff, float angle, float aspectRatio, int shape, int falloffMode);
     
     bool checkBarrierDirty();
 
@@ -60,7 +66,7 @@ private:
     int w, h;
     float omega; 
     float decay;
-    float velocityDissipation;
+    float globalDrag;
     float dt;
     int boundaryLeft, boundaryRight, boundaryTop, boundaryBottom;
 
@@ -71,7 +77,8 @@ private:
     float movingWallVelocityBottomX, movingWallVelocityBottomY;
     float gravityX;
     float gravityY;
-    float buoyancy;
+    float thermalExpansion;
+    float referenceTemperature;
     float thermalDiffusivity;
     float vorticityConfinement;
     float maxVelocity;
@@ -80,6 +87,11 @@ private:
     float temperatureViscosity;
     float flowBehaviorIndex;
     float consistencyIndex;
+
+    float porosityDrag;
+    float spongeStrength;
+    int spongeWidth;
+    bool spongeLeft, spongeRight, spongeTop, spongeBottom;
     
     int threadCount;
     
@@ -95,6 +107,7 @@ private:
     std::vector<float> dye_new;
     std::vector<float> temperature;
     std::vector<float> temperature_new;
+    std::vector<float> porosity;
     
     std::vector<float> forceX;
     std::vector<float> forceY;

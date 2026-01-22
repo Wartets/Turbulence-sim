@@ -21,7 +21,7 @@ FluidEngine::FluidEngine(int width, int height)
     , h(height)
     , omega(1.85f)
     , decay(0.0f)
-    , velocityDissipation(0.0f)
+    , globalDrag(0.0f)
     , dt(1.0f)
     , boundaryLeft(1)
     , boundaryRight(1)
@@ -40,7 +40,8 @@ FluidEngine::FluidEngine(int width, int height)
     , movingWallVelocityBottomY(0.0f)
     , gravityX(0.0f)
     , gravityY(0.0f)
-    , buoyancy(0.0f)
+    , thermalExpansion(0.0f)
+    , referenceTemperature(0.0f)
     , thermalDiffusivity(0.0f)
     , vorticityConfinement(0.0f)
     , maxVelocity(0.57f)
@@ -48,6 +49,13 @@ FluidEngine::FluidEngine(int width, int height)
     , temperatureViscosity(0.0f)
     , flowBehaviorIndex(1.0f)
     , consistencyIndex(0.0f)
+    , porosityDrag(0.0f)
+    , spongeStrength(0.0f)
+    , spongeWidth(0)
+    , spongeLeft(false)
+    , spongeRight(false)
+    , spongeTop(false)
+    , spongeBottom(false)
     , threadCount(1)
     , stop_pool(false)
     , pending_workers(0)
@@ -75,6 +83,7 @@ FluidEngine::FluidEngine(int width, int height)
     dye_new.resize(size, 0.0f);
     temperature.resize(size, 0.0f);
     temperature_new.resize(size, 0.0f);
+    porosity.resize(size, 1.0f);
 
     forceX.resize(size, 0.0f);
     forceY.resize(size, 0.0f);
@@ -321,8 +330,9 @@ void FluidEngine::setGravity(float gx, float gy) {
     gravityY = gy;
 }
 
-void FluidEngine::setBuoyancy(float b) {
-    buoyancy = b;
+void FluidEngine::setThermalProperties(float expansion, float refTemp) {
+    thermalExpansion = expansion;
+    referenceTemperature = refTemp;
 }
 
 void FluidEngine::setThermalDiffusivity(float td) {
@@ -333,8 +343,83 @@ void FluidEngine::setVorticityConfinement(float vc) {
     vorticityConfinement = vc;
 }
 
-void FluidEngine::setVelocityDissipation(float dissipation) {
-    velocityDissipation = dissipation;
+void FluidEngine::setGlobalDrag(float drag) {
+    globalDrag = drag;
+}
+
+void FluidEngine::setPorosityDrag(float drag) {
+    porosityDrag = drag;
+}
+
+void FluidEngine::setSpongeProperties(float strength, int width) {
+    spongeStrength = strength;
+    spongeWidth = width;
+}
+
+void FluidEngine::setSpongeBoundaries(bool left, bool right, bool top, bool bottom) {
+    spongeLeft = left;
+    spongeRight = right;
+    spongeTop = top;
+    spongeBottom = bottom;
+}
+
+val FluidEngine::getPorosityView() {
+    return val(typed_memory_view(w * h, porosity.data()));
+}
+
+void FluidEngine::applyPorosityBrush(int x, int y, int radius, float strength, bool add, float falloffParam, float angle, float aspectRatio, int shape, int falloffMode) {
+    float rad = (float)radius;
+    float angRad = angle * 3.14159265f / 180.0f;
+    float cosA = std::cos(angRad);
+    float sinA = std::sin(angRad);
+    float aspect = std::max(0.01f, aspectRatio);
+
+    for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+            float px = (float)dx;
+            float py = (float)dy;
+
+            float rx = px * cosA - py * sinA;
+            float ry = px * sinA + py * cosA;
+            ry /= aspect;
+
+            float dist = 0.0f;
+            if (shape == 0) { 
+                dist = std::sqrt(rx * rx + ry * ry);
+            } else if (shape == 1) { 
+                dist = std::max(std::abs(rx), std::abs(ry));
+            } else if (shape == 2) { 
+                dist = (std::abs(rx) + std::abs(ry)) * 0.7071f;
+            }
+
+            if (dist > rad) continue;
+
+            int nx = x + dx;
+            int ny = y + dy;
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            
+            int idx = ny * w + nx;
+            if (barriers[idx]) continue;
+
+            float weight = 0.0f;
+            float normDist = dist / rad;
+            
+            if (falloffMode == 1) { 
+                weight = std::exp(-normDist * normDist * falloffParam);
+            } else { 
+                float t = 1.0f - normDist;
+                if (t < 0.0f) t = 0.0f;
+                float smoothT = t * t * (3.0f - 2.0f * t);
+                weight = (1.0f - falloffParam) + falloffParam * smoothT;
+            }
+
+            float change = strength * weight;
+            porosity[idx] += add ? change : -change;
+            if (porosity[idx] > 1.0f) porosity[idx] = 1.0f;
+            if (porosity[idx] < 0.0f) porosity[idx] = 0.0f;
+        }
+    }
+    dataVersion++;
 }
 
 void FluidEngine::applyDimensionalBrush(int x, int y, int radius, int mode, float strength, float falloffParam, float angle, float aspectRatio, int shape, int falloffMode) {
@@ -606,6 +691,7 @@ void FluidEngine::reset() {
     std::fill(barriers.begin(), barriers.end(), 0);
     std::fill(dye.begin(), dye.end(), 0.0f);
     std::fill(temperature.begin(), temperature.end(), 0.0f);
+    std::fill(porosity.begin(), porosity.end(), 1.0f);
 
     float feq[9];
     equilibrium(1.0f, 0.0f, 0.0f, feq);
@@ -687,15 +773,44 @@ void FluidEngine::collideAndStream() {
                 rho[idx] = r;
 
                 float fx = gravityX + forceX[idx];
-                float fy = gravityY + buoyancy * temperature[idx] + forceY[idx];
+                float fy = gravityY + forceY[idx];
+                
+                if (thermalExpansion != 0.0f) {
+                    fy += gravityY * thermalExpansion * (temperature[idx] - referenceTemperature);
+                }
+
                 float u_eq = u_val + fx * dt;
                 float v_eq = v_val + fy * dt;
-                if (velocityDissipation > 0.0f) {
-                    float damp = 1.0f - velocityDissipation;
+                
+                float total_drag = globalDrag + porosityDrag * (1.0f - porosity[idx]);
+                if (total_drag > 0.0f) {
+                    float damp = 1.0f - total_drag;
                     if (damp < 0.0f) damp = 0.0f;
                     u_eq *= damp;
                     v_eq *= damp;
                 }
+
+                if (spongeWidth > 0 && spongeStrength > 0.0f) {
+                    float damping = 0.0f;
+                    float dist = -1.0f;
+                    
+                    if(spongeLeft && x < spongeWidth) dist = x;
+                    else if(spongeRight && x >= w - spongeWidth) dist = w - 1 - x;
+                    else if(spongeBottom && y < spongeWidth) dist = y;
+                    else if(spongeTop && y >= h - spongeWidth) dist = h - 1 - y;
+
+                    if (dist >= 0.0f) {
+                        float ramp = 1.0f - dist / (float)spongeWidth;
+                        damping = spongeStrength * ramp * ramp;
+                    }
+                    
+                    if (damping > 0.0f) {
+                        if (damping > 1.0f) damping = 1.0f;
+                        u_eq *= (1.0f - damping);
+                        v_eq *= (1.0f - damping);
+                    }
+                }
+
                 limitVelocity(u_eq, v_eq);
                 ux[idx] = u_eq;
                 uy[idx] = v_eq;
@@ -999,23 +1114,27 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("setFlowBehaviorIndex", &FluidEngine::setFlowBehaviorIndex)
         .function("setConsistencyIndex", &FluidEngine::setConsistencyIndex)
         .function("setDecay", &FluidEngine::setDecay)
-        .function("setVelocityDissipation", &FluidEngine::setVelocityDissipation)
+        .function("setGlobalDrag", &FluidEngine::setGlobalDrag)
         .function("setDt", &FluidEngine::setDt)
         .function("setGravity", &FluidEngine::setGravity)
         .function("setBoundaryConditions", &FluidEngine::setBoundaryConditions)
         .function("setInflowProperties", &FluidEngine::setInflowProperties)
         .function("setMovingWallVelocity", &FluidEngine::setMovingWallVelocity)
-        .function("setBuoyancy", &FluidEngine::setBuoyancy)
+        .function("setThermalProperties", &FluidEngine::setThermalProperties)
         .function("setThermalDiffusivity", &FluidEngine::setThermalDiffusivity)
         .function("setVorticityConfinement", &FluidEngine::setVorticityConfinement)
         .function("setMaxVelocity", &FluidEngine::setMaxVelocity)
         .function("setSmagorinskyConstant", &FluidEngine::setSmagorinskyConstant)
         .function("setTemperatureViscosity", &FluidEngine::setTemperatureViscosity)
+        .function("setPorosityDrag", &FluidEngine::setPorosityDrag)
+        .function("setSpongeProperties", &FluidEngine::setSpongeProperties)
+        .function("setSpongeBoundaries", &FluidEngine::setSpongeBoundaries)
         .function("reset", &FluidEngine::reset)
         .function("clearRegion", &FluidEngine::clearRegion)
         .function("addObstacle", emscripten::select_overload<void(int, int, int, bool, float, float, int)>(&FluidEngine::addObstacle))
         .function("applyDimensionalBrush", &FluidEngine::applyDimensionalBrush)
         .function("applyGenericBrush", &FluidEngine::applyGenericBrush)
+        .function("applyPorosityBrush", &FluidEngine::applyPorosityBrush)
         .function("getDataVersion", &FluidEngine::getDataVersion)
         .function("getDensityView", &FluidEngine::getDensityView)
         .function("getVelocityXView", &FluidEngine::getVelocityXView)
@@ -1023,5 +1142,6 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("getBarrierView", &FluidEngine::getBarrierView)
         .function("getDyeView", &FluidEngine::getDyeView)
         .function("getTemperatureView", &FluidEngine::getTemperatureView)
+        .function("getPorosityView", &FluidEngine::getPorosityView)
         .function("checkBarrierDirty", &FluidEngine::checkBarrierDirty);
 }

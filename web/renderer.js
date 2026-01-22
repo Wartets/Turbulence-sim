@@ -55,7 +55,11 @@ class Renderer {
         this.transformFeedback = null;
         this.particleCount = 0;
         this.particleStateIndex = 0;
+
         this.vorticityFBO = this.gl.createFramebuffer();
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.vorticityFBO);
+        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.texVorticity, 0);
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
 
         this.brushBuffer = this.gl.createBuffer();
         this.brushVertexCount = 6;
@@ -92,7 +96,7 @@ class Renderer {
             uy: this.gl.getUniformLocation(this.particleUpdateProgram, "u_uy"),
             obs: this.gl.getUniformLocation(this.particleUpdateProgram, "u_obs"),
             dt: this.gl.getUniformLocation(this.particleUpdateProgram, "u_dt"),
-            simDim: this.gl.getUniformLocation(this.particleUpdateProgram, "u_sim_dim"),
+            simDim: this.gl.getUniformLocation(this.particleUpdateProgram, "u_seed"),
             seed: this.gl.getUniformLocation(this.particleUpdateProgram, "u_seed"),
             boundaries: this.gl.getUniformLocation(this.particleUpdateProgram, "u_boundary_conditions")
         };
@@ -143,7 +147,6 @@ class Renderer {
 
     runVorticityPass() {
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.vorticityFBO);
-        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.texVorticity, 0);
         this.gl.viewport(0, 0, this.width, this.height);
 
         this.gl.useProgram(this.vorticityProgram);
@@ -318,26 +321,6 @@ class Renderer {
             this.runVorticityPass();
         }
 
-        const usePost = postParams && postParams.enabled;
-        
-        if (usePost) {
-            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.postFBO);
-            this.gl.clearColor(0, 0, 0, 1);
-            this.gl.clear(this.gl.COLOR_BUFFER_BIT);
-        } else {
-            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
-        }
-
-        this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
-        this.gl.disable(this.gl.BLEND);
-        
-        const modeKey = this.modeMap[vizParams.mode];
-        const program = this.visPrograms[modeKey];
-        const uniforms = this.visUniforms[modeKey];
-        
-        this.gl.useProgram(program);
-        this.gl.bindVertexArray(this.quadVAO);
-
         if (views.ux) {
             this.gl.activeTexture(this.gl.TEXTURE0);
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUx);
@@ -348,7 +331,7 @@ class Renderer {
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
             this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.uy);
         }
-        if (views.density) { 
+        if (views.density) {
             this.gl.activeTexture(this.gl.TEXTURE2);
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texRho);
             this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.density);
@@ -368,6 +351,25 @@ class Renderer {
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texTemp);
             this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.temp);
         }
+
+        const usePost = postParams && postParams.enabled;
+        if (usePost) {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.postFBO);
+            this.gl.clearColor(0, 0, 0, 1);
+            this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+        } else {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+        }
+
+        this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+        this.gl.disable(this.gl.BLEND);
+        
+        const modeKey = this.modeMap[vizParams.mode];
+        const program = this.visPrograms[modeKey];
+        const uniforms = this.visUniforms[modeKey];
+        
+        this.gl.useProgram(program);
+        this.gl.bindVertexArray(this.quadVAO);
 
         if (uniforms.ux) {
             this.gl.activeTexture(this.gl.TEXTURE0);

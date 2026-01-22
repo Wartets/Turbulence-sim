@@ -9,7 +9,7 @@ createFluidEngine().then(Module => {
 
     const params = {
         simulation: {
-            resolutionScale: 200,
+            resolutionScale: 300,
             iterations: 2,
             paused: false,
             dt: 0.95,
@@ -27,21 +27,25 @@ createFluidEngine().then(Module => {
             thermalDiffusivity: 0.001,
             vorticityConfinement: 0.1,
             maxVelocity: 0.57,
+            smagorinsky: 0.05,
+            tempViscosity: 0.0,
         },
 
         features: {
             enableGravity: false,
             enableBuoyancy: false,
             enableVorticity: true,
+            enableSmagorinsky: true,
+            enableTempViscosity: false,
         },
         
         visualization: {
             mode: 1, 
             colorScheme: 4, 
-            contrast: 1.5,
-            brightness: 1.0,
-            bias: 0.0,
-            power: 1.0,
+            contrast: 1,
+            brightness: 1,
+            bias: 0,
+            power: 1,
             obstacleColor: '#4d4d4d',
             backgroundColor: '#00020A',
             vorticityBipolar: false,
@@ -106,10 +110,20 @@ createFluidEngine().then(Module => {
         engine.setVorticityConfinement(params.features.enableVorticity ? params.physics.vorticityConfinement : 0);
     };
 
+    const updateSmagorinsky = () => {
+        if (!engine) return;
+        engine.setSmagorinskyConstant(params.features.enableSmagorinsky ? params.physics.smagorinsky : 0.0);
+    };
+
+    const updateTempViscosity = () => {
+        if (!engine) return;
+        engine.setTemperatureViscosity(params.features.enableTempViscosity ? params.physics.tempViscosity : 0.0);
+    };
+
     const gui = new lil.GUI({ title: 'Turbulence Simulation' });
     
     const simFolder = gui.addFolder('Simulation').close();
-    simFolder.add(params.simulation, 'resolutionScale', [50, 75, 100, 125, 150, 175, 200, 250, 300, 400, 600, 800]).name('Grid Resolution').onChange(initSimulation);
+    simFolder.add(params.simulation, 'resolutionScale', [50, 100, 200, 300, 400, 600, 800, 1000]).name('Grid Resolution').onChange(initSimulation);
     simFolder.add(params.simulation, 'iterations', 0, 20, 1).name('Iterations/Frame');
     simFolder.add(params.simulation, 'dt', 0.01, 2.0).name('Time Step (dt)').step(0.01).onChange(t => engine && engine.setDt(t));
     simFolder.add(params.simulation, 'threads', 1, 32, 1).name('CPU Threads').onChange(t => {
@@ -137,6 +151,20 @@ createFluidEngine().then(Module => {
     
     const advancedPhysicsFolder = physicsFolder.addFolder('Advanced').close();
     advancedPhysicsFolder.add(params.physics, 'maxVelocity', 0.01, 1.0).name('Max Velocity (Stability)').step(0.01).onChange(v => engine && engine.setMaxVelocity(v));
+
+    const turbulenceFolder = physicsFolder.addFolder('Turbulence (LES)').close();
+    const smagController = turbulenceFolder.add(params.physics, 'smagorinsky', 0.0, 0.3).name('Smagorinsky Const').step(0.01).onChange(updateSmagorinsky);
+    turbulenceFolder.add(params.features, 'enableSmagorinsky').name('Enable LES').onChange(enabled => {
+        smagController.enable(enabled);
+        updateSmagorinsky();
+    });
+
+    const thermodynamicsFolder = physicsFolder.addFolder('Thermodynamics').close();
+    const tempViscController = thermodynamicsFolder.add(params.physics, 'tempViscosity', 0.0, 5.0).name('Heat Thins Fluid').step(0.1).onChange(updateTempViscosity);
+    thermodynamicsFolder.add(params.features, 'enableTempViscosity').name('Link Viscosity').onChange(enabled => {
+        tempViscController.enable(enabled);
+        updateTempViscosity();
+    });
 
     const gravityFolder = physicsFolder.addFolder('Gravity').close();
     const gravityXController = gravityFolder.add(params.physics, 'gravityX', -4, 4).name('X Component').step(0.01).onChange(updateGravity);
@@ -170,8 +198,8 @@ createFluidEngine().then(Module => {
     }).name('Palette');
     viewFolder.add(params.visualization, 'contrast', 0.1, 5.0).name('Contrast / Gain').step(0.05);
     viewFolder.add(params.visualization, 'brightness', 0.1, 2.0).name('Brightness').step(0.05);
-    viewFolder.add(params.visualization, 'bias', -1.0, 1.0).name('Bias / Offset').step(0.01).listen();
-    viewFolder.add(params.visualization, 'power', 0.1, 5.0).name('Gamma / Power').step(0.1);
+    viewFolder.add(params.visualization, 'bias', -1.0, 1.0).name('Bias / Offset').step(0.001).listen();
+    viewFolder.add(params.visualization, 'power', 0.01, 5.0).name('Gamma / Power').step(0.01);
     viewFolder.addColor(params.visualization, 'obstacleColor').name('Obstacle Color');
     viewFolder.addColor(params.visualization, 'backgroundColor').name('Background Color');
     viewFolder.add(params.visualization, 'vorticityBipolar').name('Bipolar Map');

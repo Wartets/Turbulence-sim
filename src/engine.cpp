@@ -16,7 +16,7 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0), barriersDirty(true) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), smagorinskyConstant(0.0f), temperatureViscosity(0.0f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0), barriersDirty(true) {
     std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
     int size = w * h;
     for(int k = 0; k < 9; ++k) {
@@ -41,6 +41,14 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     for (int k = 0; k < 9; ++k) {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
+}
+
+void FluidEngine::setSmagorinskyConstant(float c) {
+    smagorinskyConstant = c;
+}
+
+void FluidEngine::setTemperatureViscosity(float v) {
+    temperatureViscosity = v;
 }
 
 bool FluidEngine::checkBarrierDirty() {
@@ -504,18 +512,24 @@ void FluidEngine::collideAndStream() {
             v_cy[k] = wasm_f32x4_splat((float)cy[k]);
         }
         
-        v128_t v_omega = wasm_f32x4_splat(omega);
-        v128_t v_one_minus_omega = wasm_f32x4_splat(1.0f - omega);
+        v128_t v_base_omega = wasm_f32x4_splat(omega);
         v128_t v_dt = wasm_f32x4_splat(dt);
         v128_t v_one = wasm_f32x4_splat(1.0f);
         v128_t v_three = wasm_f32x4_splat(3.0f);
         v128_t v_four_point_five = wasm_f32x4_splat(4.5f);
         v128_t v_one_point_five = wasm_f32x4_splat(1.5f);
+        v128_t v_point_five = wasm_f32x4_splat(0.5f);
+        v128_t v_two = wasm_f32x4_splat(2.0f);
         v128_t v_gravityX = wasm_f32x4_splat(gravityX);
         v128_t v_gravityY = wasm_f32x4_splat(gravityY);
         v128_t v_buoyancy = wasm_f32x4_splat(buoyancy);
         v128_t v_dissipation = wasm_f32x4_splat(1.0f - velocityDissipation);
         v128_t v_maxVel = wasm_f32x4_splat(maxVelocity);
+        
+        v128_t v_smag = wasm_f32x4_splat(smagorinskyConstant);
+        v128_t v_tempVisc = wasm_f32x4_splat(temperatureViscosity);
+        bool useSmagorinsky = (smagorinskyConstant > 0.0f);
+        bool useTempVisc = (temperatureViscosity > 0.0f);
 
         float feq_rest[9];
         equilibrium(1.0f, 0.0f, 0.0f, feq_rest);
@@ -557,8 +571,38 @@ void FluidEngine::collideAndStream() {
             float feq[9];
             equilibrium(r, u_eq, v_eq, feq);
 
+            float local_omega = omega;
+            
+            if (useTempVisc || useSmagorinsky) {
+                float current_tau = 1.0f / omega;
+                float nu = (current_tau - 0.5f) / 3.0f;
+
+                if (useTempVisc) {
+                    float T = temperature[idx];
+                    nu = nu * (1.0f / (1.0f + temperatureViscosity * T));
+                }
+
+                if (useSmagorinsky) {
+                    float Qxx = 0.0f, Qxy = 0.0f, Qyy = 0.0f;
+                    for(int k=0; k<9; ++k) {
+                        float f_neq = f[k][idx] - feq[k];
+                        Qxx += cx[k] * cx[k] * f_neq;
+                        Qxy += cx[k] * cy[k] * f_neq;
+                        Qyy += cy[k] * cy[k] * f_neq;
+                    }
+                    float magS = std::sqrt(Qxx*Qxx + 2.0f*Qxy*Qxy + Qyy*Qyy);
+                    float eddy_nu = (smagorinskyConstant * smagorinskyConstant) * magS;
+                    nu += eddy_nu;
+                }
+
+                float tau_eff = 3.0f * nu + 0.5f;
+                local_omega = 1.0f / tau_eff;
+                if(local_omega < 0.05f) local_omega = 0.05f;
+                if(local_omega > 1.95f) local_omega = 1.95f;
+            }
+
             for (int k = 0; k < 9; ++k) {
-                float f_out = f[k][idx] * (1.0f - omega) + feq[k] * omega;
+                float f_out = f[k][idx] * (1.0f - local_omega) + feq[k] * local_omega;
                 int nx = x + cx[k];
                 int ny = y + cy[k];
                 int dest_k = k;
@@ -659,14 +703,53 @@ void FluidEngine::collideAndStream() {
                     v128_t v_u2 = wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy));
                     v128_t v_usq_term = wasm_f32x4_mul(v_u2, v_one_point_five);
                     
-                    v128_t v_f_out[9];
+                    v128_t v_feq[9];
                     for (int k = 0; k < 9; ++k) {
                         v128_t v_eu = wasm_f32x4_add(wasm_f32x4_mul(v_cx[k], v_ux), wasm_f32x4_mul(v_cy[k], v_uy));
-                        v128_t v_feq = wasm_f32x4_mul(v_weights[k], v_rho);
+                        v128_t v_feq_val = wasm_f32x4_mul(v_weights[k], v_rho);
                         v128_t v_term = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_eu, v_three));
                         v_term = wasm_f32x4_add(v_term, wasm_f32x4_sub(wasm_f32x4_mul(wasm_f32x4_mul(v_eu, v_eu), v_four_point_five), v_usq_term));
-                        v_feq = wasm_f32x4_mul(v_feq, v_term);
-                        v_f_out[k] = wasm_f32x4_add(wasm_f32x4_mul(v_f[k], v_one_minus_omega), wasm_f32x4_mul(v_feq, v_omega));
+                        v_feq[k] = wasm_f32x4_mul(v_feq_val, v_term);
+                    }
+
+                    v128_t v_omega_local = v_base_omega;
+                    
+                    if (useSmagorinsky || useTempVisc) {
+                         v128_t v_tau = wasm_f32x4_div(v_one, v_base_omega);
+                         v128_t v_nu = wasm_f32x4_div(wasm_f32x4_sub(v_tau, v_point_five), v_three);
+                         
+                         if (useTempVisc) {
+                             v128_t v_t_factor = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_tempVisc, v_temp));
+                             v_nu = wasm_f32x4_div(v_nu, v_t_factor);
+                         }
+
+                         if (useSmagorinsky) {
+                             v128_t v_Qxx = wasm_f32x4_splat(0.0f);
+                             v128_t v_Qxy = wasm_f32x4_splat(0.0f);
+                             v128_t v_Qyy = wasm_f32x4_splat(0.0f);
+
+                             for (int k = 0; k < 9; ++k) {
+                                 v128_t v_neq = wasm_f32x4_sub(v_f[k], v_feq[k]);
+                                 v_Qxx = wasm_f32x4_add(v_Qxx, wasm_f32x4_mul(v_cx[k], wasm_f32x4_mul(v_cx[k], v_neq)));
+                                 v_Qxy = wasm_f32x4_add(v_Qxy, wasm_f32x4_mul(v_cx[k], wasm_f32x4_mul(v_cy[k], v_neq)));
+                                 v_Qyy = wasm_f32x4_add(v_Qyy, wasm_f32x4_mul(v_cy[k], wasm_f32x4_mul(v_cy[k], v_neq)));
+                             }
+                             
+                             v128_t v_magS2 = wasm_f32x4_add(wasm_f32x4_mul(v_Qxx, v_Qxx), wasm_f32x4_add(wasm_f32x4_mul(v_two, wasm_f32x4_mul(v_Qxy, v_Qxy)), wasm_f32x4_mul(v_Qyy, v_Qyy)));
+                             v128_t v_magS = wasm_f32x4_sqrt(v_magS2);
+                             v128_t v_nu_eddy = wasm_f32x4_mul(wasm_f32x4_mul(v_smag, v_smag), v_magS);
+                             v_nu = wasm_f32x4_add(v_nu, v_nu_eddy);
+                         }
+
+                         v128_t v_tau_eff = wasm_f32x4_add(wasm_f32x4_mul(v_three, v_nu), v_point_five);
+                         v_omega_local = wasm_f32x4_div(v_one, v_tau_eff);
+                         v_omega_local = wasm_f32x4_min(wasm_f32x4_max(v_omega_local, wasm_f32x4_splat(0.05f)), wasm_f32x4_splat(1.95f));
+                    }
+                    
+                    v128_t v_one_minus_omega = wasm_f32x4_sub(v_one, v_omega_local);
+                    v128_t v_f_out[9];
+                    for(int k=0; k<9; ++k) {
+                        v_f_out[k] = wasm_f32x4_add(wasm_f32x4_mul(v_f[k], v_one_minus_omega), wasm_f32x4_mul(v_feq[k], v_omega_local));
                     }
 
                     float f_out_batch[9][4];
@@ -698,42 +781,7 @@ void FluidEngine::collideAndStream() {
                 }
 
                 for (; x < simd_end; ++x) {
-                    int idx = y * w + x;
-                    if (barriers[idx]) {
-                        rho[idx] = 1.0f; ux[idx] = 0.0f; uy[idx] = 0.0f;
-                        for(int k=0; k<9; ++k) f_new[k][idx] = feq_rest[k];
-                        continue;
-                    }
-                    float r = 0.0f, u_val = 0.0f, v_val = 0.0f;
-                    for (int k = 0; k < 9; ++k) {
-                        float f_val = f[k][idx];
-                        r += f_val;
-                        u_val += f_val * cx[k];
-                        v_val += f_val * cy[k];
-                    }
-                    if (r > 0) { u_val /= r; v_val /= r; }
-                    rho[idx] = r;
-                    float fx = gravityX + forceX[idx];
-                    float fy = gravityY + buoyancy * temperature[idx] + forceY[idx];
-                    float u_eq = u_val + fx * dt;
-                    float v_eq = v_val + fy * dt;
-                    if (velocityDissipation > 0.0f) {
-                        float damp = 1.0f - velocityDissipation;
-                        if (damp < 0.0f) damp = 0.0f;
-                        u_eq *= damp;
-                        v_eq *= damp;
-                    }
-                    limitVelocity(u_eq, v_eq);
-                    ux[idx] = u_eq;
-                    uy[idx] = v_eq;
-                    float feq[9];
-                    equilibrium(r, u_eq, v_eq, feq);
-                    for (int k = 0; k < 9; ++k) {
-                        float val = f[k][idx] * (1.0f - omega) + feq[k] * omega;
-                        int n_idx = idx + cx[k] + cy[k] * w;
-                        if (barriers[n_idx]) f_new[opp[k]][idx] = val;
-                        else f_new[k][n_idx] = val;
-                    }
+                    process_scalar(x, y);
                 }
                 
                 process_scalar(w - 1, y);
@@ -921,6 +969,8 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("setThermalDiffusivity", &FluidEngine::setThermalDiffusivity)
         .function("setVorticityConfinement", &FluidEngine::setVorticityConfinement)
         .function("setMaxVelocity", &FluidEngine::setMaxVelocity)
+        .function("setSmagorinskyConstant", &FluidEngine::setSmagorinskyConstant)
+        .function("setTemperatureViscosity", &FluidEngine::setTemperatureViscosity)
         .function("reset", &FluidEngine::reset)
         .function("clearRegion", &FluidEngine::clearRegion)
         .function("addObstacle", emscripten::select_overload<void(int, int, int, bool, float, float, int)>(&FluidEngine::addObstacle))

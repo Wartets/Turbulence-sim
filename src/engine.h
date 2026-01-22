@@ -27,6 +27,9 @@ public:
     void setVorticityConfinement(float vc);
     void setMaxVelocity(float mv);
     
+    void setSmagorinskyConstant(float c);
+    void setTemperatureViscosity(float v);
+    
     void setThreadCount(int count);
 
     emscripten::val getDensityView();
@@ -59,6 +62,10 @@ private:
     float thermalDiffusivity;
     float vorticityConfinement;
     float maxVelocity;
+    
+    float smagorinskyConstant;
+    float temperatureViscosity;
+    
     int threadCount;
     
     std::vector<float> f[9];     

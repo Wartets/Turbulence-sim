@@ -1,5 +1,7 @@
 BUILD_DIR = web
 SRC_DIR = src
+LOG_DIR = logs
+TEMP_BUILD_DIR = temp_build
 
 # Define the compiler and flags
 EMCC = emcc
@@ -24,10 +26,16 @@ WEB_ASSETS = index.html style.css main.js renderer.js shaders.js
 
 all: $(OUTPUT_FILE)
 
-# Rule to compile the C++ code
+# Rule to compile the C++ code with staging folder strategy
 $(OUTPUT_FILE): $(SOURCE_FILE) $(SRC_DIR)/engine.h
 	@echo "Compiling C++ to WebAssembly with Make..."
-	$(EMCC) $(EMCC_FLAGS) $(SOURCE_FILE) -o $(OUTPUT_FILE)
+	@mkdir -p $(LOG_DIR)
+	@mkdir -p $(TEMP_BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)
+	$(EMCC) $(EMCC_FLAGS) $(SOURCE_FILE) -o $(TEMP_BUILD_DIR)/engine.js
+	@mv -f $(TEMP_BUILD_DIR)/engine.js $(BUILD_DIR)/
+	@mv -f $(TEMP_BUILD_DIR)/engine.wasm $(BUILD_DIR)/
+	@if [ -f $(TEMP_BUILD_DIR)/engine.worker.js ]; then mv -f $(TEMP_BUILD_DIR)/engine.worker.js $(BUILD_DIR)/; fi
 
 # A target to build the full web package
 build: $(OUTPUT_FILE) copy_assets
@@ -39,3 +47,5 @@ copy_assets:
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -f $(BUILD_DIR)/engine.js $(BUILD_DIR)/engine.wasm $(BUILD_DIR)/engine.worker.js
+	@rm -rf $(LOG_DIR)
+	@rm -rf $(TEMP_BUILD_DIR)

@@ -16,13 +16,57 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), smagorinskyConstant(0.0f), temperatureViscosity(0.0f), flowBehaviorIndex(1.0f), consistencyIndex(0.0f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0), barriersDirty(true), dataVersion(1) {
-    std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
+FluidEngine::FluidEngine(int width, int height)
+    : w(width)
+    , h(height)
+    , omega(1.85f)
+    , decay(0.0f)
+    , velocityDissipation(0.0f)
+    , dt(1.0f)
+    , boundaryLeft(1)
+    , boundaryRight(1)
+    , boundaryTop(1)
+    , boundaryBottom(1)
+    , inflowVelocityX(0.0f)
+    , inflowVelocityY(0.0f)
+    , inflowDensity(1.0f)
+    , movingWallVelocityLeftX(0.0f)
+    , movingWallVelocityLeftY(0.0f)
+    , movingWallVelocityRightX(0.0f)
+    , movingWallVelocityRightY(0.0f)
+    , movingWallVelocityTopX(0.0f)
+    , movingWallVelocityTopY(0.0f)
+    , movingWallVelocityBottomX(0.0f)
+    , movingWallVelocityBottomY(0.0f)
+    , gravityX(0.0f)
+    , gravityY(0.0f)
+    , buoyancy(0.0f)
+    , thermalDiffusivity(0.0f)
+    , vorticityConfinement(0.0f)
+    , maxVelocity(0.57f)
+    , smagorinskyConstant(0.0f)
+    , temperatureViscosity(0.0f)
+    , flowBehaviorIndex(1.0f)
+    , consistencyIndex(0.0f)
+    , threadCount(1)
+    , stop_pool(false)
+    , pending_workers(0)
+    , work_generation(0)
+    , barriersDirty(true)
+    , dataVersion(1)
+{
+    std::cout << "DEBUG: FluidEngine Created (w="
+              << width << ", h=" << height
+              << "). Threading support initialized."
+              << std::endl;
+
     int size = w * h;
-    for(int k = 0; k < 9; ++k) {
+
+    for (int k = 0; k < 9; ++k) {
         f[k].resize(size);
         f_new[k].resize(size);
     }
+
     rho.resize(size, 1.0f);
     ux.resize(size, 0.0f);
     uy.resize(size, 0.0f);
@@ -31,15 +75,105 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     dye_new.resize(size, 0.0f);
     temperature.resize(size, 0.0f);
     temperature_new.resize(size, 0.0f);
-    
+
     forceX.resize(size, 0.0f);
     forceY.resize(size, 0.0f);
     curl.resize(size, 0.0f);
 
     float feq[9];
     equilibrium(1.0f, 0.0f, 0.0f, feq);
+
     for (int k = 0; k < 9; ++k) {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
+    }
+}
+
+void FluidEngine::setBoundaryConditions(int left, int right, int top, int bottom) {
+    boundaryLeft = left;
+    boundaryRight = right;
+    boundaryTop = top;
+    boundaryBottom = bottom;
+}
+
+void FluidEngine::setInflowProperties(float vx, float vy, float rho) {
+    inflowVelocityX = vx;
+    inflowVelocityY = vy;
+    inflowDensity = rho;
+}
+
+void FluidEngine::setMovingWallVelocity(int side, float vx, float vy) {
+    switch (side) {
+        case 0: movingWallVelocityLeftX = vx; movingWallVelocityLeftY = vy; break;
+        case 1: movingWallVelocityRightX = vx; movingWallVelocityRightY = vy; break;
+        case 2: movingWallVelocityTopX = vx; movingWallVelocityTopY = vy; break;
+        case 3: movingWallVelocityBottomX = vx; movingWallVelocityBottomY = vy; break;
+    }
+}
+
+void FluidEngine::applyMacroscopicBoundaries() {
+    float feq[9];
+    if (boundaryLeft == 4) {
+        for (int y = 0; y < h; ++y) {
+            int idx = y * w + 0;
+            if (barriers[idx]) continue;
+            equilibrium(inflowDensity, inflowVelocityX, inflowVelocityY, feq);
+            for(int k = 0; k < 9; ++k) f[k][idx] = feq[k];
+        }
+    }
+    if (boundaryRight == 4) {
+        for (int y = 0; y < h; ++y) {
+            int idx = y * w + (w - 1);
+            if (barriers[idx]) continue;
+            equilibrium(inflowDensity, inflowVelocityX, inflowVelocityY, feq);
+            for(int k = 0; k < 9; ++k) f[k][idx] = feq[k];
+        }
+    }
+    if (boundaryBottom == 4) {
+        for (int x = 0; x < w; ++x) {
+            int idx = 0 * w + x;
+            if (barriers[idx]) continue;
+            equilibrium(inflowDensity, inflowVelocityX, inflowVelocityY, feq);
+            for(int k = 0; k < 9; ++k) f[k][idx] = feq[k];
+        }
+    }
+    if (boundaryTop == 4) {
+        for (int x = 0; x < w; ++x) {
+            int idx = (h - 1) * w + x;
+            if (barriers[idx]) continue;
+            equilibrium(inflowDensity, inflowVelocityX, inflowVelocityY, feq);
+            for(int k = 0; k < 9; ++k) f[k][idx] = feq[k];
+        }
+    }
+}
+
+void FluidEngine::applyPostStreamBoundaries() {
+    if (boundaryLeft == 5) {
+        for (int y = 0; y < h; ++y) {
+            int idx = y * w + 0;
+            if(barriers[idx]) continue;
+            for (int k = 0; k < 9; ++k) f[k][idx] = f[k][idx + 1];
+        }
+    }
+    if (boundaryRight == 5) {
+        for (int y = 0; y < h; ++y) {
+            int idx = y * w + (w - 1);
+            if(barriers[idx]) continue;
+            for (int k = 0; k < 9; ++k) f[k][idx] = f[k][idx - 1];
+        }
+    }
+    if (boundaryBottom == 5) {
+        for (int x = 0; x < w; ++x) {
+            int idx = 0 * w + x;
+            if(barriers[idx]) continue;
+            for (int k = 0; k < 9; ++k) f[k][idx] = f[k][idx + w];
+        }
+    }
+    if (boundaryTop == 5) {
+        for (int x = 0; x < w; ++x) {
+            int idx = (h - 1) * w + x;
+            if(barriers[idx]) continue;
+            for (int k = 0; k < 9; ++k) f[k][idx] = f[k][idx - w];
+        }
     }
 }
 
@@ -176,10 +310,6 @@ void FluidEngine::setViscosity(float viscosity) {
 
 void FluidEngine::setDecay(float newDecay) {
     decay = newDecay;
-}
-
-void FluidEngine::setBoundaryType(int type) {
-    boundaryType = type;
 }
 
 void FluidEngine::setDt(float newDt) {
@@ -515,7 +645,9 @@ void FluidEngine::clearRegion(int x, int y, int radius) {
 
 void FluidEngine::step(int iterations) {
     for(int i=0; i<iterations; ++i) {
+        applyMacroscopicBoundaries();
         collideAndStream();
+        applyPostStreamBoundaries();
         advectDye();
         advectTemperature();
     }
@@ -524,331 +656,154 @@ void FluidEngine::step(int iterations) {
 
 void FluidEngine::collideAndStream() {
     parallel_for(0, h, [&](int startY, int endY) {
-        v128_t v_weights[9];
-        v128_t v_cx[9];
-        v128_t v_cy[9];
-        for(int k=0; k<9; ++k) {
-            v_weights[k] = wasm_f32x4_splat(weights[k]);
-            v_cx[k] = wasm_f32x4_splat((float)cx[k]);
-            v_cy[k] = wasm_f32x4_splat((float)cy[k]);
-        }
-        
-        v128_t v_base_omega = wasm_f32x4_splat(omega);
-        v128_t v_dt = wasm_f32x4_splat(dt);
-        v128_t v_one = wasm_f32x4_splat(1.0f);
-        v128_t v_three = wasm_f32x4_splat(3.0f);
-        v128_t v_four_point_five = wasm_f32x4_splat(4.5f);
-        v128_t v_one_point_five = wasm_f32x4_splat(1.5f);
-        v128_t v_point_five = wasm_f32x4_splat(0.5f);
-        v128_t v_two = wasm_f32x4_splat(2.0f);
-        v128_t v_gravityX = wasm_f32x4_splat(gravityX);
-        v128_t v_gravityY = wasm_f32x4_splat(gravityY);
-        v128_t v_buoyancy = wasm_f32x4_splat(buoyancy);
-        v128_t v_dissipation = wasm_f32x4_splat(1.0f - velocityDissipation);
-        v128_t v_maxVel = wasm_f32x4_splat(maxVelocity);
-        
-        v128_t v_smag = wasm_f32x4_splat(smagorinskyConstant);
-        v128_t v_tempVisc = wasm_f32x4_splat(temperatureViscosity);
+        float feq_rest[9];
+        equilibrium(1.0f, 0.0f, 0.0f, feq_rest);
+
         bool useSmagorinsky = (smagorinskyConstant > 0.0f);
         bool useTempVisc = (temperatureViscosity > 0.0f);
         bool useNonNewtonian = (consistencyIndex > 0.0f);
         float n_idx_val = flowBehaviorIndex;
         float k_idx_val = consistencyIndex;
 
-        float feq_rest[9];
-        equilibrium(1.0f, 0.0f, 0.0f, feq_rest);
-
-        auto process_scalar = [&](int x, int y) {
-            int idx = y * w + x;
-            if (barriers[idx]) {
-                rho[idx] = 1.0f;
-                ux[idx] = 0.0f;
-                uy[idx] = 0.0f;
-                for(int k=0; k<9; ++k) f_new[k][idx] = feq_rest[k];
-                return;
-            }
-
-            float r = 0.0f, u_val = 0.0f, v_val = 0.0f;
-            for (int k = 0; k < 9; ++k) {
-                float f_val = f[k][idx];
-                r += f_val;
-                u_val += f_val * cx[k];
-                v_val += f_val * cy[k];
-            }
-            if (r > 0) { u_val /= r; v_val /= r; }
-            rho[idx] = r;
-
-            float fx = gravityX + forceX[idx];
-            float fy = gravityY + buoyancy * temperature[idx] + forceY[idx];
-            float u_eq = u_val + fx * dt;
-            float v_eq = v_val + fy * dt;
-            if (velocityDissipation > 0.0f) {
-                float damp = 1.0f - velocityDissipation;
-                if (damp < 0.0f) damp = 0.0f;
-                u_eq *= damp;
-                v_eq *= damp;
-            }
-            limitVelocity(u_eq, v_eq);
-            ux[idx] = u_eq;
-            uy[idx] = v_eq;
-
-            float feq[9];
-            equilibrium(r, u_eq, v_eq, feq);
-
-            float local_omega = omega;
-            
-            if (useTempVisc || useSmagorinsky || useNonNewtonian) {
-                float current_tau = 1.0f / omega;
-                float nu = (current_tau - 0.5f) / 3.0f;
-
-                if (useTempVisc) {
-                    float T = temperature[idx];
-                    nu = nu * (1.0f / (1.0f + temperatureViscosity * T));
-                }
-                
-                float magS = 0.0f;
-                if (useSmagorinsky || useNonNewtonian) {
-                    float Qxx = 0.0f, Qxy = 0.0f, Qyy = 0.0f;
-                    for(int k=0; k<9; ++k) {
-                        float f_neq = f[k][idx] - feq[k];
-                        Qxx += cx[k] * cx[k] * f_neq;
-                        Qxy += cx[k] * cy[k] * f_neq;
-                        Qyy += cy[k] * cy[k] * f_neq;
-                    }
-                    magS = std::sqrt(Qxx*Qxx + 2.0f*Qxy*Qxy + Qyy*Qyy);
+        for (int y = startY; y < endY; ++y) {
+            for (int x = 0; x < w; ++x) {
+                int idx = y * w + x;
+                if (barriers[idx]) {
+                    rho[idx] = 1.0f;
+                    ux[idx] = 0.0f;
+                    uy[idx] = 0.0f;
+                    for(int k=0; k<9; ++k) f_new[k][idx] = feq_rest[k];
+                    continue;
                 }
 
-                if (useNonNewtonian) {
-                    float strainMag = magS * 1.5f * omega; 
-                    float viscosityFactor = 1.0f + k_idx_val * std::pow(strainMag, n_idx_val - 1.0f);
-                    nu *= viscosityFactor;
+                float r = 0.0f, u_val = 0.0f, v_val = 0.0f;
+                for (int k = 0; k < 9; ++k) {
+                    float f_val = f[k][idx];
+                    r += f_val;
+                    u_val += f_val * cx[k];
+                    v_val += f_val * cy[k];
                 }
+                if (r > 0) { u_val /= r; v_val /= r; }
+                rho[idx] = r;
 
-                if (useSmagorinsky) {
-                    float eddy_nu = (smagorinskyConstant * smagorinskyConstant) * magS;
-                    nu += eddy_nu;
+                float fx = gravityX + forceX[idx];
+                float fy = gravityY + buoyancy * temperature[idx] + forceY[idx];
+                float u_eq = u_val + fx * dt;
+                float v_eq = v_val + fy * dt;
+                if (velocityDissipation > 0.0f) {
+                    float damp = 1.0f - velocityDissipation;
+                    if (damp < 0.0f) damp = 0.0f;
+                    u_eq *= damp;
+                    v_eq *= damp;
                 }
+                limitVelocity(u_eq, v_eq);
+                ux[idx] = u_eq;
+                uy[idx] = v_eq;
 
-                float tau_eff = 3.0f * nu + 0.5f;
-                local_omega = 1.0f / tau_eff;
-                if(local_omega < 0.05f) local_omega = 0.05f;
-                if(local_omega > 1.95f) local_omega = 1.95f;
-            }
+                float feq[9];
+                equilibrium(r, u_eq, v_eq, feq);
 
-            for (int k = 0; k < 9; ++k) {
-                float f_out = f[k][idx] * (1.0f - local_omega) + feq[k] * local_omega;
-                int nx = x + cx[k];
-                int ny = y + cy[k];
-                int dest_k = k;
-                bool bounce = false;
-                int dest_x = nx;
-                int dest_y = ny;
+                float local_omega = omega;
+                if (useTempVisc || useSmagorinsky || useNonNewtonian) {
+                    float current_tau = 1.0f / omega;
+                    float nu = (current_tau - 0.5f) / 3.0f;
 
-                switch(boundaryType) {
-                    case 0: dest_x = (nx + w) % w; dest_y = (ny + h) % h; break;
-                    case 1: if (nx < 0 || nx >= w || ny < 0 || ny >= h) { bounce = true; dest_k = opp[k]; dest_x = x; dest_y = y; } break;
-                    case 2: dest_x = (nx + w) % w; if (ny < 0 || ny >= h) { bounce = true; dest_k = opp[k]; dest_x = x; dest_y = y; } break;
-                    case 3: dest_y = (ny + h) % h; if (nx < 0 || nx >= w) { bounce = true; dest_k = opp[k]; dest_x = x; dest_y = y; } break;
-                    case 4: 
-                        if (nx < 0 || nx >= w) { bounce = true; dest_k = slip_v[k]; dest_x = x; dest_y = y; } 
-                        else if (ny < 0 || ny >= h) { bounce = true; dest_k = slip_h[k]; dest_x = x; dest_y = y; } 
-                        break;
-                    case 5: 
-                        dest_x = (nx + w) % w; 
-                        if (ny < 0 || ny >= h) { bounce = true; dest_k = slip_h[k]; dest_x = x; dest_y = y; } 
-                        break;
-                }
-
-                if (bounce) {
-                    f_new[dest_k][idx] = f_out;
-                } else {
-                    int n_idx = dest_y * w + dest_x;
-                    if (barriers[n_idx]) f_new[opp[k]][idx] = f_out;
-                    else f_new[dest_k][n_idx] = f_out;
-                }
-            }
-        };
-
-        const int BLOCK_SIZE = 32;
-
-        for (int by = startY; by < endY; by += BLOCK_SIZE) {
-            int maxY = std::min(by + BLOCK_SIZE, endY);
-            for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
-                int maxX = std::min(bx + BLOCK_SIZE, w);
-                
-                for (int y = by; y < maxY; ++y) {
-                    bool boundaryRow = (y == 0 || y == h - 1);
-                    if (boundaryRow) {
-                        for (int x = bx; x < maxX; ++x) process_scalar(x, y);
-                        continue;
-                    }
-
-                    int x = bx;
-                    if (x == 0) {
-                        process_scalar(0, y);
-                        x = 1;
-                    }
-
-                    int limitX = (maxX == w) ? w - 1 : maxX;
-
-                    while (x + 4 <= limitX) {
-                        int idx = y * w + x;
-                        
-                        v128_t v_f[9];
-                        for(int k=0; k<9; ++k) v_f[k] = wasm_v128_load(&f[k][idx]);
-
-                        v128_t v_rho = v_f[0];
-                        for(int k=1; k<9; ++k) v_rho = wasm_f32x4_add(v_rho, v_f[k]);
-
-                        v128_t v_ux = wasm_f32x4_mul(v_f[1], v_cx[1]);
-                        v128_t v_uy = wasm_f32x4_mul(v_f[1], v_cy[1]);
-                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[3], v_cx[3]));
-                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[5], v_cx[5]));
-                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[6], v_cx[6]));
-                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[7], v_cx[7]));
-                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[8], v_cx[8]));
-                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[2], v_cy[2]));
-                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[4], v_cy[4]));
-                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[5], v_cy[5]));
-                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[6], v_cy[6]));
-                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[7], v_cy[7]));
-                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[8], v_cy[8]));
-
-                        v128_t v_rho_inv = wasm_f32x4_div(v_one, wasm_f32x4_max(v_rho, wasm_f32x4_splat(1e-6f)));
-                        v_ux = wasm_f32x4_mul(v_ux, v_rho_inv);
-                        v_uy = wasm_f32x4_mul(v_uy, v_rho_inv);
-
-                        v128_t v_forceX = wasm_v128_load(&forceX[idx]);
-                        v128_t v_forceY = wasm_v128_load(&forceY[idx]);
-                        v128_t v_temp = wasm_v128_load(&temperature[idx]);
-
-                        v128_t v_fx = wasm_f32x4_add(v_gravityX, v_forceX);
-                        v128_t v_fy = wasm_f32x4_add(v_gravityY, wasm_f32x4_add(wasm_f32x4_mul(v_buoyancy, v_temp), v_forceY));
-
-                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_fx, v_dt));
-                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_fy, v_dt));
-
-                        if (velocityDissipation > 0.0f) {
-                            v_ux = wasm_f32x4_mul(v_ux, v_dissipation);
-                            v_uy = wasm_f32x4_mul(v_uy, v_dissipation);
-                        }
-
-                        v128_t v_speed = wasm_f32x4_sqrt(wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy)));
-                        v128_t v_mask = wasm_f32x4_gt(v_speed, v_maxVel);
-                        if (wasm_v128_any_true(v_mask)) {
-                            v128_t v_ratio = wasm_f32x4_div(v_maxVel, v_speed);
-                            v_ux = wasm_v128_bitselect(wasm_f32x4_mul(v_ux, v_ratio), v_ux, v_mask);
-                            v_uy = wasm_v128_bitselect(wasm_f32x4_mul(v_uy, v_ratio), v_uy, v_mask);
-                        }
-
-                        wasm_v128_store(&rho[idx], v_rho);
-                        wasm_v128_store(&ux[idx], v_ux);
-                        wasm_v128_store(&uy[idx], v_uy);
-
-                        v128_t v_u2 = wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy));
-                        v128_t v_usq_term = wasm_f32x4_mul(v_u2, v_one_point_five);
-                        
-                        v128_t v_feq[9];
-                        for (int k = 0; k < 9; ++k) {
-                            v128_t v_eu = wasm_f32x4_add(wasm_f32x4_mul(v_cx[k], v_ux), wasm_f32x4_mul(v_cy[k], v_uy));
-                            v128_t v_feq_val = wasm_f32x4_mul(v_weights[k], v_rho);
-                            v128_t v_term = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_eu, v_three));
-                            v_term = wasm_f32x4_add(v_term, wasm_f32x4_sub(wasm_f32x4_mul(wasm_f32x4_mul(v_eu, v_eu), v_four_point_five), v_usq_term));
-                            v_feq[k] = wasm_f32x4_mul(v_feq_val, v_term);
-                        }
-
-                        v128_t v_omega_local = v_base_omega;
-                        
-                        if (useSmagorinsky || useTempVisc || useNonNewtonian) {
-                            v128_t v_tau = wasm_f32x4_div(v_one, v_base_omega);
-                            v128_t v_nu = wasm_f32x4_div(wasm_f32x4_sub(v_tau, v_point_five), v_three);
-                            
-                            if (useTempVisc) {
-                                v128_t v_t_factor = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_tempVisc, v_temp));
-                                v_nu = wasm_f32x4_div(v_nu, v_t_factor);
-                            }
-
-                            if (useSmagorinsky || useNonNewtonian) {
-                                v128_t v_Qxx = wasm_f32x4_splat(0.0f);
-                                v128_t v_Qxy = wasm_f32x4_splat(0.0f);
-                                v128_t v_Qyy = wasm_f32x4_splat(0.0f);
-
-                                for (int k = 0; k < 9; ++k) {
-                                    v128_t v_neq = wasm_f32x4_sub(v_f[k], v_feq[k]);
-                                    v_Qxx = wasm_f32x4_add(v_Qxx, wasm_f32x4_mul(v_cx[k], wasm_f32x4_mul(v_cx[k], v_neq)));
-                                    v_Qxy = wasm_f32x4_add(v_Qxy, wasm_f32x4_mul(v_cx[k], wasm_f32x4_mul(v_cy[k], v_neq)));
-                                    v_Qyy = wasm_f32x4_add(v_Qyy, wasm_f32x4_mul(v_cy[k], wasm_f32x4_mul(v_cy[k], v_neq)));
-                                }
-                                
-                                v128_t v_magS2 = wasm_f32x4_add(wasm_f32x4_mul(v_Qxx, v_Qxx), wasm_f32x4_add(wasm_f32x4_mul(v_two, wasm_f32x4_mul(v_Qxy, v_Qxy)), wasm_f32x4_mul(v_Qyy, v_Qyy)));
-                                v128_t v_magS = wasm_f32x4_sqrt(v_magS2);
-
-                                if (useNonNewtonian) {
-                                    float temp_magS[4];
-                                    float temp_omega[4];
-                                    wasm_v128_store(temp_magS, v_magS);
-                                    wasm_v128_store(temp_omega, v_base_omega);
-                                    float scale_factors[4];
-                                    for(int i=0; i<4; i++) {
-                                        float strain = temp_magS[i] * 1.5f * temp_omega[i];
-                                        scale_factors[i] = 1.0f + k_idx_val * std::pow(strain, n_idx_val - 1.0f);
-                                    }
-                                    v_nu = wasm_f32x4_mul(v_nu, wasm_v128_load(scale_factors));
-                                }
-
-                                if (useSmagorinsky) {
-                                    v128_t v_nu_eddy = wasm_f32x4_mul(wasm_f32x4_mul(v_smag, v_smag), v_magS);
-                                    v_nu = wasm_f32x4_add(v_nu, v_nu_eddy);
-                                }
-                            }
-
-                            v128_t v_tau_eff = wasm_f32x4_add(wasm_f32x4_mul(v_three, v_nu), v_point_five);
-                            v_omega_local = wasm_f32x4_div(v_one, v_tau_eff);
-                            v_omega_local = wasm_f32x4_min(wasm_f32x4_max(v_omega_local, wasm_f32x4_splat(0.05f)), wasm_f32x4_splat(1.95f));
-                        }
-                        
-                        v128_t v_one_minus_omega = wasm_f32x4_sub(v_one, v_omega_local);
-                        v128_t v_f_out[9];
-                        for(int k=0; k<9; ++k) {
-                            v_f_out[k] = wasm_f32x4_add(wasm_f32x4_mul(v_f[k], v_one_minus_omega), wasm_f32x4_mul(v_feq[k], v_omega_local));
-                        }
-
-                        float f_out_batch[9][4];
-                        for(int k=0; k<9; ++k) wasm_v128_store((v128_t*)f_out_batch[k], v_f_out[k]);
-
-                        for (int lane = 0; lane < 4; ++lane) {
-                            int curr_x = x + lane;
-                            int curr_idx = idx + lane;
-                            
-                            if (barriers[curr_idx]) {
-                                rho[curr_idx] = 1.0f;
-                                ux[curr_idx] = 0.0f;
-                                uy[curr_idx] = 0.0f;
-                                for(int k=0; k<9; ++k) f_new[k][curr_idx] = feq_rest[k];
-                                continue;
-                            }
-
-                            for (int k = 0; k < 9; ++k) {
-                                float val = f_out_batch[k][lane];
-                                int n_idx = curr_idx + cx[k] + cy[k] * w;
-                                
-                                if (barriers[n_idx]) {
-                                    f_new[opp[k]][curr_idx] = val;
-                                } else {
-                                    f_new[k][n_idx] = val;
-                                }
-                            }
-                        }
-                        x += 4;
-                    }
-
-                    while (x < limitX) {
-                        process_scalar(x, y);
-                        x++;
+                    if (useTempVisc) {
+                        float T = temperature[idx];
+                        nu = nu * (1.0f / (1.0f + temperatureViscosity * T));
                     }
                     
-                    if (maxX == w && x == w - 1) {
-                         process_scalar(w - 1, y);
+                    float magS = 0.0f;
+                    if (useSmagorinsky || useNonNewtonian) {
+                        float Qxx = 0.0f, Qxy = 0.0f, Qyy = 0.0f;
+                        for(int k=0; k<9; ++k) {
+                            float f_neq = f[k][idx] - feq[k];
+                            Qxx += cx[k] * cx[k] * f_neq;
+                            Qxy += cx[k] * cy[k] * f_neq;
+                            Qyy += cy[k] * cy[k] * f_neq;
+                        }
+                        magS = std::sqrt(Qxx*Qxx + 2.0f*Qxy*Qxy + Qyy*Qyy);
+                    }
+
+                    if (useNonNewtonian) {
+                        float strainMag = magS * 1.5f * omega; 
+                        float viscosityFactor = 1.0f + k_idx_val * std::pow(strainMag, n_idx_val - 1.0f);
+                        nu *= viscosityFactor;
+                    }
+
+                    if (useSmagorinsky) {
+                        float eddy_nu = (smagorinskyConstant * smagorinskyConstant) * magS;
+                        nu += eddy_nu;
+                    }
+
+                    float tau_eff = 3.0f * nu + 0.5f;
+                    local_omega = 1.0f / tau_eff;
+                    if(local_omega < 0.05f) local_omega = 0.05f;
+                    if(local_omega > 1.95f) local_omega = 1.95f;
+                }
+
+                for (int k = 0; k < 9; ++k) {
+                    float f_out = f[k][idx] * (1.0f - local_omega) + feq[k] * local_omega;
+                    int nx = x + cx[k];
+                    int ny = y + cy[k];
+
+                    if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                        int n_idx = ny * w + nx;
+                        if (barriers[n_idx]) {
+                            f_new[opp[k]][idx] = f_out;
+                        } else {
+                            f_new[k][n_idx] = f_out;
+                        }
+                    } else {
+                        int dest_k = opp[k];
+                        float f_bounce = f_out;
+                        bool periodic_x = false;
+                        bool periodic_y = false;
+                        int final_nx = nx;
+                        int final_ny = ny;
+                        
+                        if (nx < 0 && boundaryLeft == 0) { periodic_x = true; final_nx = w - 1; }
+                        else if (nx >= w && boundaryRight == 0) { periodic_x = true; final_nx = 0; }
+                        
+                        if (ny < 0 && boundaryBottom == 0) { periodic_y = true; final_ny = h - 1; }
+                        else if (ny >= h && boundaryTop == 0) { periodic_y = true; final_ny = 0; }
+
+                        if (periodic_x || periodic_y) {
+                            f_new[k][final_ny * w + final_nx] = f_bounce;
+                            continue;
+                        }
+
+                        if (nx < 0) {
+                            if (boundaryLeft == 2) dest_k = slip_v[k];
+                            else if (boundaryLeft == 3) {
+                                float wall_term = 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityLeftX + cy[k] * movingWallVelocityLeftY);
+                                f_bounce += wall_term;
+                            }
+                        } else if (nx >= w) {
+                            if (boundaryRight == 2) dest_k = slip_v[k];
+                            else if (boundaryRight == 3) {
+                                float wall_term = 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityRightX + cy[k] * movingWallVelocityRightY);
+                                f_bounce += wall_term;
+                            }
+                        } else if (ny < 0) {
+                            if (boundaryBottom == 2) dest_k = slip_h[k];
+                            else if (boundaryBottom == 3) {
+                                float wall_term = 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityBottomX + cy[k] * movingWallVelocityBottomY);
+                                f_bounce += wall_term;
+                            }
+                        } else if (ny >= h) {
+                            if (boundaryTop == 2) dest_k = slip_h[k];
+                            else if (boundaryTop == 3) {
+                                float wall_term = 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityTopX + cy[k] * movingWallVelocityTopY);
+                                f_bounce += wall_term;
+                            }
+                        }
+
+                        bool slip_corner = ( ( (nx < 0 && boundaryLeft == 2) || (nx >= w && boundaryRight == 2) ) &&
+                                             ( (ny < 0 && boundaryBottom == 2) || (ny >= h && boundaryTop == 2) ) );
+                        if (slip_corner) dest_k = opp[k];
+
+                        f_new[dest_k][idx] = f_bounce;
                     }
                 }
             }
@@ -861,54 +816,37 @@ void FluidEngine::collideAndStream() {
 
     if (vorticityConfinement > 0.0f) {
         std::fill(curl.begin(), curl.end(), 0.0f);
-
         parallel_for(1, h - 1, [&](int startY, int endY) {
-            const int BLOCK_SIZE = 32;
-            for (int by = startY; by < endY; by += BLOCK_SIZE) {
-                int maxY = std::min(by + BLOCK_SIZE, endY);
-                for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
-                    int maxX = std::min(bx + BLOCK_SIZE, w);
-                    
-                    for (int y = by; y < maxY; ++y) {
-                        for (int x = std::max(bx, 1); x < std::min(maxX, w - 1); ++x) {
-                            int idx = y * w + x;
-                            if (barriers[idx]) continue;
-                            curl[idx] = uy[idx + 1] - uy[idx - 1] - (ux[idx + w] - ux[idx - w]);
-                        }
-                    }
+            for (int y = startY; y < endY; ++y) {
+                for (int x = 1; x < w - 1; ++x) {
+                    int idx = y * w + x;
+                    if (barriers[idx]) continue;
+                    curl[idx] = uy[idx + 1] - uy[idx - 1] - (ux[idx + w] - ux[idx - w]);
                 }
             }
         });
         
         parallel_for(1, h - 1, [&](int startY, int endY) {
-            const int BLOCK_SIZE = 32;
-            for (int by = startY; by < endY; by += BLOCK_SIZE) {
-                int maxY = std::min(by + BLOCK_SIZE, endY);
-                for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
-                    int maxX = std::min(bx + BLOCK_SIZE, w);
-
-                    for (int y = by; y < maxY; ++y) {
-                        for (int x = std::max(bx, 1); x < std::min(maxX, w - 1); ++x) {
-                            int idx = y * w + x;
-                            if (barriers[idx]) {
-                                forceX[idx] = 0.0f;
-                                forceY[idx] = 0.0f;
-                                continue;
-                            }
-                            
-                            float dc_dx = (std::abs(curl[idx + 1]) - std::abs(curl[idx - 1])) * 0.5f;
-                            float dc_dy = (std::abs(curl[idx + w]) - std::abs(curl[idx - w])) * 0.5f;
-                            float mag_grad = std::sqrt(dc_dx * dc_dx + dc_dy * dc_dy);
-                            
-                            if (mag_grad > 1e-6f) {
-                                float scale = vorticityConfinement / mag_grad;
-                                forceX[idx] = scale * dc_dy * curl[idx];
-                                forceY[idx] = scale * -dc_dx * curl[idx];
-                            } else {
-                                forceX[idx] = 0.0f;
-                                forceY[idx] = 0.0f;
-                            }
-                        }
+            for (int y = startY; y < endY; ++y) {
+                for (int x = 1; x < w - 1; ++x) {
+                    int idx = y * w + x;
+                    if (barriers[idx]) {
+                        forceX[idx] = 0.0f;
+                        forceY[idx] = 0.0f;
+                        continue;
+                    }
+                    
+                    float dc_dx = (std::abs(curl[idx + 1]) - std::abs(curl[idx - 1])) * 0.5f;
+                    float dc_dy = (std::abs(curl[idx + w]) - std::abs(curl[idx - w])) * 0.5f;
+                    float mag_grad = std::sqrt(dc_dx * dc_dx + dc_dy * dc_dy);
+                    
+                    if (mag_grad > 1e-6f) {
+                        float scale = vorticityConfinement / mag_grad;
+                        forceX[idx] = scale * dc_dy * curl[idx];
+                        forceY[idx] = scale * -dc_dx * curl[idx];
+                    } else {
+                        forceX[idx] = 0.0f;
+                        forceY[idx] = 0.0f;
                     }
                 }
             }
@@ -1064,7 +1002,9 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("setVelocityDissipation", &FluidEngine::setVelocityDissipation)
         .function("setDt", &FluidEngine::setDt)
         .function("setGravity", &FluidEngine::setGravity)
-        .function("setBoundaryType", &FluidEngine::setBoundaryType)
+        .function("setBoundaryConditions", &FluidEngine::setBoundaryConditions)
+        .function("setInflowProperties", &FluidEngine::setInflowProperties)
+        .function("setMovingWallVelocity", &FluidEngine::setMovingWallVelocity)
         .function("setBuoyancy", &FluidEngine::setBuoyancy)
         .function("setThermalDiffusivity", &FluidEngine::setThermalDiffusivity)
         .function("setVorticityConfinement", &FluidEngine::setVorticityConfinement)

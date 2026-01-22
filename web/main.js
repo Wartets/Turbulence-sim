@@ -21,7 +21,17 @@ createFluidEngine().then(Module => {
             viscosity: 0.8,
             decay: 0.001,
             velocityDissipation: 0.0,
-            boundary: 1,
+            boundaryLeft: 1,
+            boundaryRight: 1,
+            boundaryTop: 1,
+            boundaryBottom: 1,
+            inflowVelocityX: 0.1,
+            inflowVelocityY: 0.0,
+            inflowDensity: 1.0,
+            movingWallVelocityLeft: 0.0,
+            movingWallVelocityRight: 0.0,
+            movingWallVelocityTop: 0.1,
+            movingWallVelocityBottom: 0.0,
             gravityX: 0,
             gravityY: 0,
             buoyancy: 1.0,
@@ -206,14 +216,75 @@ createFluidEngine().then(Module => {
     physicsFolder.add(params.physics, 'viscosity', 0.001, 10).name('Viscosity').step(0.001).onChange(v => engine && engine.setViscosity(v));
     physicsFolder.add(params.physics, 'decay', 0.0, 0.05).name('Dye Dissipation').step(0.0001).onChange(d => engine && engine.setDecay(d));
     physicsFolder.add(params.physics, 'velocityDissipation', 0.0, 0.1).name('Velocity Drag').step(0.0001).onChange(d => engine && engine.setVelocityDissipation(d));
-    physicsFolder.add(params.physics, 'boundary', { 
-        'Periodic': 0, 
-        'Box': 1, 
-        'Channel X': 2, 
-        'Channel Y': 3,
-        'Slip Box': 4,
-        'Slip Channel X': 5
-    }).name('Boundaries').onChange(b => engine && engine.setBoundaryType(parseInt(b)));
+    const boundaryTypes = {
+        'Periodic': 0,
+        'No-Slip Wall': 1,
+        'Free-Slip Wall': 2,
+        'Moving Wall': 3,
+        'Inflow': 4,
+        'Outflow': 5
+    };
+
+    const boundaryFolder = physicsFolder.addFolder('Boundaries').close();
+    let wallVC = {};
+    let inflowC = {};
+    let inflowFolder, wallFolder;
+
+    const updateBoundaryControls = () => {
+        const bLeft = parseInt(params.physics.boundaryLeft);
+        const bRight = parseInt(params.physics.boundaryRight);
+        const bTop = parseInt(params.physics.boundaryTop);
+        const bBottom = parseInt(params.physics.boundaryBottom);
+
+        const needsInflow = bLeft === 4 || bRight === 4 || bTop === 4 || bBottom === 4;
+        inflowFolder.show(needsInflow);
+
+        const isLeftMoving = bLeft === 3;
+        const isRightMoving = bRight === 3;
+        const isTopMoving = bTop === 3;
+        const isBottomMoving = bBottom === 3;
+
+        const needsWall = isLeftMoving || isRightMoving || isTopMoving || isBottomMoving;
+        wallFolder.show(needsWall);
+
+        if (wallVC.left) wallVC.left.show(isLeftMoving);
+        if (wallVC.right) wallVC.right.show(isRightMoving);
+        if (wallVC.top) wallVC.top.show(isTopMoving);
+        if (wallVC.bottom) wallVC.bottom.show(isBottomMoving);
+    };
+
+    const updateBoundaries = () => {
+        if (!engine) return;
+        engine.setBoundaryConditions(
+            parseInt(params.physics.boundaryLeft),
+            parseInt(params.physics.boundaryRight),
+            parseInt(params.physics.boundaryTop),
+            parseInt(params.physics.boundaryBottom)
+        );
+        updateBoundaryControls();
+    };
+    
+    boundaryFolder.add(params.physics, 'boundaryLeft', boundaryTypes).name('Left').onChange(updateBoundaries);
+    boundaryFolder.add(params.physics, 'boundaryRight', boundaryTypes).name('Right').onChange(updateBoundaries);
+    boundaryFolder.add(params.physics, 'boundaryTop', boundaryTypes).name('Top').onChange(updateBoundaries);
+    boundaryFolder.add(params.physics, 'boundaryBottom', boundaryTypes).name('Bottom').onChange(updateBoundaries);
+
+    inflowFolder = boundaryFolder.addFolder('Inflow Properties');
+    const updateInflow = () => engine && engine.setInflowProperties(params.physics.inflowVelocityX, params.physics.inflowVelocityY, params.physics.inflowDensity);
+    inflowC.vx = inflowFolder.add(params.physics, 'inflowVelocityX', -0.5, 0.5).name('Velocity X').step(0.01).onChange(updateInflow);
+    inflowC.vy = inflowFolder.add(params.physics, 'inflowVelocityY', -0.5, 0.5).name('Velocity Y').step(0.01).onChange(updateInflow);
+    inflowC.rho = inflowFolder.add(params.physics, 'inflowDensity', 0.1, 5.0).name('Density').onChange(updateInflow);
+
+    wallFolder = boundaryFolder.addFolder('Moving Wall Velocity');
+    const updateWall = (side, value) => {
+        if(!engine) return;
+        if(side === 'Top' || side === 'Bottom') engine.setMovingWallVelocity(side === 'Top' ? 2 : 3, value, 0);
+        else engine.setMovingWallVelocity(side === 'Left' ? 0 : 1, 0, value);
+    };
+    wallVC.left = wallFolder.add(params.physics, 'movingWallVelocityLeft', -0.5, 0.5).name('Left Wall (vy)').step(0.01).onChange(v => updateWall('Left', v));
+    wallVC.right = wallFolder.add(params.physics, 'movingWallVelocityRight', -0.5, 0.5).name('Right Wall (vy)').step(0.01).onChange(v => updateWall('Right', v));
+    wallVC.top = wallFolder.add(params.physics, 'movingWallVelocityTop', -0.5, 0.5).name('Top Wall (vx)').step(0.01).onChange(v => updateWall('Top', v));
+    wallVC.bottom = wallFolder.add(params.physics, 'movingWallVelocityBottom', -0.5, 0.5).name('Bottom Wall (vx)').step(0.01).onChange(v => updateWall('Bottom', v));
     
     const advancedPhysicsFolder = physicsFolder.addFolder('Advanced').close();
     advancedPhysicsFolder.add(params.physics, 'maxVelocity', 0.01, 1.0).name('Max Velocity (Stability)').step(0.01).onChange(v => engine && engine.setMaxVelocity(v));
@@ -395,7 +466,12 @@ createFluidEngine().then(Module => {
         engine.setDecay(params.physics.decay);
         engine.setVelocityDissipation(params.physics.velocityDissipation);
         engine.setDt(params.simulation.dt);
-        engine.setBoundaryType(parseInt(params.physics.boundary));
+        updateBoundaries();
+        updateInflow();
+        updateWall('Left', params.physics.movingWallVelocityLeft);
+        updateWall('Right', params.physics.movingWallVelocityRight);
+        updateWall('Top', params.physics.movingWallVelocityTop);
+        updateWall('Bottom', params.physics.movingWallVelocityBottom);
         engine.setThermalDiffusivity(params.physics.thermalDiffusivity);
         engine.setMaxVelocity(params.physics.maxVelocity);
         
@@ -413,6 +489,7 @@ createFluidEngine().then(Module => {
         renderer = new Renderer(canvas, simWidth, simHeight);
         renderer.initParticles(params.particles.count);
 
+        updateBoundaryControls();
         updateBrushUI();
         loop();
     }

@@ -19,7 +19,9 @@ public:
     void setDecay(float decay);
     void setVelocityDissipation(float dissipation);
     
-    void setBoundaryType(int type);
+    void setBoundaryConditions(int left, int right, int top, int bottom);
+    void setInflowProperties(float vx, float vy, float rho);
+    void setMovingWallVelocity(int side, float vx, float vy);
     void setDt(float dt);
     void setGravity(float gx, float gy);
     void setBuoyancy(float b);
@@ -60,7 +62,13 @@ private:
     float decay;
     float velocityDissipation;
     float dt;
-    int boundaryType;
+    int boundaryLeft, boundaryRight, boundaryTop, boundaryBottom;
+
+    float inflowVelocityX, inflowVelocityY, inflowDensity;
+    float movingWallVelocityLeftX, movingWallVelocityLeftY;
+    float movingWallVelocityRightX, movingWallVelocityRightY;
+    float movingWallVelocityTopX, movingWallVelocityTopY;
+    float movingWallVelocityBottomX, movingWallVelocityBottomY;
     float gravityX;
     float gravityY;
     float buoyancy;
@@ -113,6 +121,8 @@ private:
     void advectDye();
     void advectTemperature();
     void limitVelocity(float &u, float &v);
+    void applyMacroscopicBoundaries();
+    void applyPostStreamBoundaries();
     
     void parallel_for(int start, int end, std::function<void(int, int)> func);
 };

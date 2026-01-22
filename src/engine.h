@@ -132,6 +132,21 @@ private:
     
     std::atomic<bool> barriersDirty;
 
+    using WallHandler = void (FluidEngine::*)(int& dest_k, float& f_bounce, int k, int idx) const;
+    WallHandler leftHandler;
+    WallHandler rightHandler;
+    WallHandler topHandler;
+    WallHandler bottomHandler;
+
+    void setHandlers();
+    void handlerNoSlip(int& dest_k, float& f_bounce, int k, int idx) const;
+    void handlerSlipV(int& dest_k, float& f_bounce, int k, int idx) const;
+    void handlerSlipH(int& dest_k, float& f_bounce, int k, int idx) const;
+    void handlerMovingLeft(int& dest_k, float& f_bounce, int k, int idx) const;
+    void handlerMovingRight(int& dest_k, float& f_bounce, int k, int idx) const;
+    void handlerMovingTop(int& dest_k, float& f_bounce, int k, int idx) const;
+    void handlerMovingBottom(int& dest_k, float& f_bounce, int k, int idx) const;
+
     void initThreadPool(int count);
 
     void equilibrium(float r, float u, float v, float* feq);

@@ -85,6 +85,8 @@ FluidEngine::FluidEngine(int width, int height)
     for (int k = 0; k < 9; ++k) {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
+    
+    setHandlers();
 }
 
 void FluidEngine::setBFECC(bool enable) {
@@ -148,6 +150,7 @@ void FluidEngine::setBoundaryConditions(int left, int right, int top, int bottom
     boundaryRight = right;
     boundaryTop = top;
     boundaryBottom = bottom;
+    setHandlers();
 }
 
 void FluidEngine::setInflowProperties(float vx, float vy, float rho) {
@@ -916,8 +919,6 @@ void FluidEngine::collideAndStream() {
                             f_new[k][n_idx] = f_out;
                         }
                     } else {
-                        int dest_k = opp[k];
-                        float f_bounce = f_out;
                         bool periodic_x = false;
                         bool periodic_y = false;
                         int final_nx = nx;
@@ -930,35 +931,17 @@ void FluidEngine::collideAndStream() {
                         else if (ny >= h && boundaryTop == 0) { periodic_y = true; final_ny = 0; }
 
                         if (periodic_x || periodic_y) {
-                            f_new[k][final_ny * w + final_nx] = f_bounce;
+                            f_new[k][final_ny * w + final_nx] = f_out;
                             continue;
                         }
 
-                        if (nx < 0) {
-                            if (boundaryLeft == 2) dest_k = slip_v[k];
-                            else if (boundaryLeft == 3) {
-                                float wall_term = 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityLeftX + cy[k] * movingWallVelocityLeftY);
-                                f_bounce += wall_term;
-                            }
-                        } else if (nx >= w) {
-                            if (boundaryRight == 2) dest_k = slip_v[k];
-                            else if (boundaryRight == 3) {
-                                float wall_term = 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityRightX + cy[k] * movingWallVelocityRightY);
-                                f_bounce += wall_term;
-                            }
-                        } else if (ny < 0) {
-                            if (boundaryBottom == 2) dest_k = slip_h[k];
-                            else if (boundaryBottom == 3) {
-                                float wall_term = 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityBottomX + cy[k] * movingWallVelocityBottomY);
-                                f_bounce += wall_term;
-                            }
-                        } else if (ny >= h) {
-                            if (boundaryTop == 2) dest_k = slip_h[k];
-                            else if (boundaryTop == 3) {
-                                float wall_term = 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityTopX + cy[k] * movingWallVelocityTopY);
-                                f_bounce += wall_term;
-                            }
-                        }
+                        int dest_k = opp[k];
+                        float f_bounce = f_out;
+                        
+                        if (nx < 0)         (this->*leftHandler)(dest_k, f_bounce, k, idx);
+                        else if (nx >= w)   (this->*rightHandler)(dest_k, f_bounce, k, idx);
+                        else if (ny < 0)    (this->*bottomHandler)(dest_k, f_bounce, k, idx);
+                        else if (ny >= h)   (this->*topHandler)(dest_k, f_bounce, k, idx);
 
                         bool slip_corner = ( ( (nx < 0 && boundaryLeft == 2) || (nx >= w && boundaryRight == 2) ) &&
                                              ( (ny < 0 && boundaryBottom == 2) || (ny >= h && boundaryTop == 2) ) );

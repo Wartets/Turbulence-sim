@@ -60,7 +60,7 @@ createFluidEngine().then(Module => {
             enableSmagorinsky: true,
             enableTempViscosity: false,
             enableNonNewtonian: false,
-            enableBFECC: true,
+            enableBFECC: false,
             spongeLeft: false,
             spongeRight: false,
             spongeTop: false,

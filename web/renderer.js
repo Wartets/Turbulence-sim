@@ -19,12 +19,14 @@ class Renderer {
         this.particleUpdateProgram = this.createProgram(PARTICLE_UPDATE_VS, PARTICLE_UPDATE_FS);
         this.brushProgram = this.createProgram(BRUSH_VS, BRUSH_FS);
         this.postProgram = this.createProgram(POST_VS, POST_FS);
+        this.vorticityProgram = this.createProgram(VS_SOURCE, VORTICITY_FS_SOURCE);
         
         this.texUx = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
         this.texUy = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
         this.texDye = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
         this.texObs = this.createTexture(this.gl.R8, this.gl.RED, this.gl.UNSIGNED_BYTE, this.width, this.height);
         this.texTemp = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
+        this.texVorticity = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
 
         this.quadBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
@@ -42,6 +44,7 @@ class Renderer {
         this.particleIndexBuffer = this.gl.createBuffer();
         this.particleVAO = this.gl.createVertexArray();
         this.particleFBO = this.gl.createFramebuffer();
+        this.vorticityFBO = this.gl.createFramebuffer();
         this.texPartA = null;
         this.texPartB = null;
         this.particleCount = 0;
@@ -72,6 +75,7 @@ class Renderer {
             dye: this.gl.getUniformLocation(this.program, "u_dye"),
             obs: this.gl.getUniformLocation(this.program, "u_obs"),
             temp: this.gl.getUniformLocation(this.program, "u_temp"),
+            vorticity: this.gl.getUniformLocation(this.program, "u_vorticity"),
             mode: this.gl.getUniformLocation(this.program, "u_mode"),
             contrast: this.gl.getUniformLocation(this.program, "u_contrast"),
             brightness: this.gl.getUniformLocation(this.program, "u_brightness"),
@@ -117,6 +121,33 @@ class Renderer {
             radius: this.gl.getUniformLocation(this.postProgram, "u_radius"),
             intensity: this.gl.getUniformLocation(this.postProgram, "u_intensity")
         };
+
+        this.vorticityUniforms = {
+            ux: this.gl.getUniformLocation(this.vorticityProgram, "u_ux"),
+            uy: this.gl.getUniformLocation(this.vorticityProgram, "u_uy")
+        };
+    }
+
+    runVorticityPass() {
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.vorticityFBO);
+        this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.texVorticity, 0);
+        this.gl.viewport(0, 0, this.width, this.height);
+
+        this.gl.useProgram(this.vorticityProgram);
+        this.gl.bindVertexArray(this.quadVAO);
+
+        this.gl.activeTexture(this.gl.TEXTURE0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUx);
+        this.gl.uniform1i(this.vorticityUniforms.ux, 0);
+
+        this.gl.activeTexture(this.gl.TEXTURE1);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
+        this.gl.uniform1i(this.vorticityUniforms.uy, 1);
+
+        this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+
+        this.gl.bindVertexArray(null);
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
     }
 
     initParticles(count) {
@@ -249,6 +280,10 @@ class Renderer {
     }
 
     draw(views, vizParams, postParams, obsDirty) {
+        if (vizParams.mode === 0 && (views.ux || views.uy)) {
+            this.runVorticityPass();
+        }
+
         const usePost = postParams && postParams.enabled;
         
         if (usePost) {
@@ -325,6 +360,10 @@ class Renderer {
         this.gl.activeTexture(this.gl.TEXTURE5);
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.texTemp);
         this.gl.uniform1i(this.uniforms.temp, 5);
+
+        this.gl.activeTexture(this.gl.TEXTURE6);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texVorticity);
+        this.gl.uniform1i(this.uniforms.vorticity, 6);
 
         this.gl.uniform1i(this.uniforms.mode, vizParams.mode);
         this.gl.uniform1f(this.uniforms.contrast, vizParams.contrast);

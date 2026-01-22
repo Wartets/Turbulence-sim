@@ -94,6 +94,28 @@ void main() {
     outNewPos = vec4(p, 0.0, 1.0);
 }`;
 
+const VORTICITY_FS_SOURCE = `#version 300 es
+precision highp float;
+uniform sampler2D u_ux;
+uniform sampler2D u_uy;
+in vec2 v_uv;
+out vec4 outColor;
+
+void main() {
+    ivec2 texSize = textureSize(u_ux, 0);
+    vec2 texelSize = 1.0 / vec2(texSize);
+
+    float uy_r = texture(u_uy, v_uv + vec2(texelSize.x, 0.0)).r;
+    float uy_l = texture(u_uy, v_uv - vec2(texelSize.x, 0.0)).r;
+    float ux_t = texture(u_ux, v_uv + vec2(0.0, texelSize.y)).r;
+    float ux_b = texture(u_ux, v_uv - vec2(0.0, texelSize.y)).r;
+
+    float curl = (uy_r - uy_l) - (ux_t - ux_b);
+    curl *= 2.0;
+
+    outColor = vec4(curl, 0.0, 0.0, 1.0);
+}`;
+
 const FS_SOURCE = `#version 300 es
 precision highp float;
 uniform sampler2D u_ux;
@@ -102,6 +124,7 @@ uniform sampler2D u_rho;
 uniform sampler2D u_dye;
 uniform sampler2D u_obs;
 uniform sampler2D u_temp;
+uniform sampler2D u_vorticity;
 
 uniform int u_mode;
 uniform float u_contrast;
@@ -210,18 +233,7 @@ void main() {
     float activity = 0.0;
 
     if (u_mode == 0) { 
-        // Vorticity
-        ivec2 texSize = textureSize(u_ux, 0);
-        vec2 texelSize = 1.0 / vec2(texSize);
-
-        float uy_r = texture(u_uy, v_uv + vec2(texelSize.x, 0.0)).r;
-        float uy_l = texture(u_uy, v_uv - vec2(texelSize.x, 0.0)).r;
-        float ux_t = texture(u_ux, v_uv + vec2(0.0, texelSize.y)).r;
-        float ux_b = texture(u_ux, v_uv - vec2(0.0, texelSize.y)).r;
-
-        float curl = (uy_r - uy_l) - (ux_t - ux_b);
-        curl *= 2.0;
-
+        float curl = texture(u_vorticity, v_uv).r;
         float raw = curl - u_bias;
         
         if (u_vorticity_bipolar) {

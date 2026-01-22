@@ -8,6 +8,7 @@ createFluidEngine().then(Module => {
     let frameCount = 0;
 
     const params = {
+        preset: 'Default',
         simulation: {
             resolutionScale: 300,
             iterations: 2,
@@ -135,6 +136,58 @@ createFluidEngine().then(Module => {
 
     const gui = new lil.GUI({ title: 'Turbulence Simulation' });
     
+    let presetsData = {};
+
+    const findController = (root, obj, property) => {
+        let found = null;
+        const traverse = (node) => {
+            if (found) return;
+            if (node.controllers) {
+                for (let c of node.controllers) {
+                    if (c.object === obj && c.property === property) {
+                        found = c;
+                        return;
+                    }
+                }
+            }
+            if (node.folders) {
+                for (let f of node.folders) traverse(f);
+            }
+        };
+        traverse(root);
+        return found;
+    };
+
+    const applyPresetDeep = (targetObj, sourceObj) => {
+        for (const key in sourceObj) {
+            if (typeof sourceObj[key] === 'object' && sourceObj[key] !== null && !Array.isArray(sourceObj[key])) {
+                applyPresetDeep(targetObj[key], sourceObj[key]);
+            } else {
+                const controller = findController(gui, targetObj, key);
+                if (controller) {
+                    controller.setValue(sourceObj[key]);
+                } else {
+                    targetObj[key] = sourceObj[key];
+                }
+            }
+        }
+    };
+
+    fetch('presets.json')
+        .then(response => response.json())
+        .then(data => {
+            presetsData = data;
+            const presetNames = Object.keys(data);
+            const presetFolder = gui.addFolder('Presets');
+            presetFolder.add(params, 'preset', presetNames).name('Select Preset').onChange(name => {
+                if (presetsData[name]) {
+                    applyPresetDeep(params, presetsData[name]);
+                }
+            });
+            presetFolder.open();
+        })
+        .catch(err => console.error('Failed to load presets:', err));
+
     const simFolder = gui.addFolder('Simulation').close();
     simFolder.add(params.simulation, 'resolutionScale', [50, 100, 200, 300, 400, 600, 800, 1000]).name('Grid Resolution').onChange(initSimulation);
     simFolder.add(params.simulation, 'iterations', 0, 20, 1).name('Iterations/Frame');

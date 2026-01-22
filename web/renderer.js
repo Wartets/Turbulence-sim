@@ -14,7 +14,15 @@ class Renderer {
         
         this.gl.pixelStorei(this.gl.UNPACK_ALIGNMENT, 1);
 
-        this.program = this.createProgram(VS_SOURCE, FS_SOURCE);
+        this.visPrograms = {
+            vorticity: this.createProgram(VS_SOURCE, VORTICITY_VIS_FS),
+            velocity: this.createProgram(VS_SOURCE, VELOCITY_VIS_FS),
+            dye: this.createProgram(VS_SOURCE, DYE_VIS_FS),
+            temperature: this.createProgram(VS_SOURCE, TEMPERATURE_VIS_FS),
+            pressure: this.createProgram(VS_SOURCE, PRESSURE_VIS_FS)
+        };
+        this.modeMap = ['vorticity', 'velocity', 'dye', 'temperature', 'pressure'];
+
         this.particleRenderProgram = this.createProgram(PARTICLE_VS, PARTICLE_FS);
         this.particleUpdateProgram = this.createProgram(PARTICLE_UPDATE_VS, PARTICLE_UPDATE_FS);
         this.brushProgram = this.createProgram(BRUSH_VS, BRUSH_FS);
@@ -27,6 +35,7 @@ class Renderer {
         this.texObs = this.createTexture(this.gl.R8, this.gl.RED, this.gl.UNSIGNED_BYTE, this.width, this.height);
         this.texTemp = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
         this.texVorticity = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
+        this.texRho = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
 
         this.quadBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
@@ -67,25 +76,12 @@ class Renderer {
         this.gl.bindVertexArray(null);
 
         this.initPostProcessing();
-
-        this.gl.useProgram(this.program);
-        this.uniforms = {
-            ux: this.gl.getUniformLocation(this.program, "u_ux"),
-            uy: this.gl.getUniformLocation(this.program, "u_uy"),
-            dye: this.gl.getUniformLocation(this.program, "u_dye"),
-            obs: this.gl.getUniformLocation(this.program, "u_obs"),
-            temp: this.gl.getUniformLocation(this.program, "u_temp"),
-            vorticity: this.gl.getUniformLocation(this.program, "u_vorticity"),
-            mode: this.gl.getUniformLocation(this.program, "u_mode"),
-            contrast: this.gl.getUniformLocation(this.program, "u_contrast"),
-            brightness: this.gl.getUniformLocation(this.program, "u_brightness"),
-            bias: this.gl.getUniformLocation(this.program, "u_bias"),
-            power: this.gl.getUniformLocation(this.program, "u_power"),
-            colorScheme: this.gl.getUniformLocation(this.program, "u_color_scheme"),
-            obstacleColor: this.gl.getUniformLocation(this.program, "u_obstacle_color"),
-            backgroundColor: this.gl.getUniformLocation(this.program, "u_background_color"),
-            vorticityBipolar: this.gl.getUniformLocation(this.program, "u_vorticity_bipolar")
-        };
+        
+        this.visUniforms = {};
+        for (const key in this.visPrograms) {
+            this.gl.useProgram(this.visPrograms[key]);
+            this.visUniforms[key] = this._getVisUniformLocations(this.visPrograms[key]);
+        }
         
         this.particleRenderUniforms = {
             positions: this.gl.getUniformLocation(this.particleRenderProgram, "u_positions"),
@@ -125,6 +121,26 @@ class Renderer {
         this.vorticityUniforms = {
             ux: this.gl.getUniformLocation(this.vorticityProgram, "u_ux"),
             uy: this.gl.getUniformLocation(this.vorticityProgram, "u_uy")
+        };
+    }
+
+    _getVisUniformLocations(program) {
+        return {
+            ux: this.gl.getUniformLocation(program, "u_ux"),
+            uy: this.gl.getUniformLocation(program, "u_uy"),
+            rho: this.gl.getUniformLocation(program, "u_rho"),
+            dye: this.gl.getUniformLocation(program, "u_dye"),
+            obs: this.gl.getUniformLocation(program, "u_obs"),
+            temp: this.gl.getUniformLocation(program, "u_temp"),
+            vorticity: this.gl.getUniformLocation(program, "u_vorticity"),
+            contrast: this.gl.getUniformLocation(program, "u_contrast"),
+            brightness: this.gl.getUniformLocation(program, "u_brightness"),
+            bias: this.gl.getUniformLocation(program, "u_bias"),
+            power: this.gl.getUniformLocation(program, "u_power"),
+            colorScheme: this.gl.getUniformLocation(program, "u_color_scheme"),
+            obstacleColor: this.gl.getUniformLocation(program, "u_obstacle_color"),
+            backgroundColor: this.gl.getUniformLocation(program, "u_background_color"),
+            vorticityBipolar: this.gl.getUniformLocation(program, "u_vorticity_bipolar")
         };
     }
 
@@ -295,10 +311,13 @@ class Renderer {
         }
 
         this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
-
         this.gl.disable(this.gl.BLEND);
-        this.gl.useProgram(this.program);
         
+        const modeKey = this.modeMap[vizParams.mode];
+        const program = this.visPrograms[modeKey];
+        const uniforms = this.visUniforms[modeKey];
+        
+        this.gl.useProgram(program);
         this.gl.bindVertexArray(this.quadVAO);
 
         if (views.ux) {
@@ -311,16 +330,11 @@ class Renderer {
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
             this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.uy);
         }
-        
-        const texDensity = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
-        if (vizParams.mode === 4 || vizParams.mode === 2) { 
-             if (views.density) { 
-                 this.gl.activeTexture(this.gl.TEXTURE2);
-                 this.gl.bindTexture(this.gl.TEXTURE_2D, texDensity);
-                 this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.density);
-             }
+        if (views.density) { 
+            this.gl.activeTexture(this.gl.TEXTURE2);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texRho);
+            this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.density);
         }
-
         if (views.dye) {
             this.gl.activeTexture(this.gl.TEXTURE3);
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texDye);
@@ -337,59 +351,66 @@ class Renderer {
             this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.temp);
         }
 
-        this.gl.activeTexture(this.gl.TEXTURE0);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUx);
-        this.gl.uniform1i(this.uniforms.ux, 0);
+        if (uniforms.ux) {
+            this.gl.activeTexture(this.gl.TEXTURE0);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUx);
+            this.gl.uniform1i(uniforms.ux, 0);
+        }
+        if (uniforms.uy) {
+            this.gl.activeTexture(this.gl.TEXTURE1);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
+            this.gl.uniform1i(uniforms.uy, 1);
+        }
+        if (uniforms.rho) {
+            this.gl.activeTexture(this.gl.TEXTURE2);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texRho); 
+            this.gl.uniform1i(uniforms.rho, 2);
+        }
+        if (uniforms.dye) {
+            this.gl.activeTexture(this.gl.TEXTURE3);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texDye);
+            this.gl.uniform1i(uniforms.dye, 3);
+        }
+        if (uniforms.obs) {
+            this.gl.activeTexture(this.gl.TEXTURE4);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texObs);
+            this.gl.uniform1i(uniforms.obs, 4);
+        }
+        if (uniforms.temp) {
+            this.gl.activeTexture(this.gl.TEXTURE5);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texTemp);
+            this.gl.uniform1i(uniforms.temp, 5);
+        }
+        if (uniforms.vorticity) {
+            this.gl.activeTexture(this.gl.TEXTURE6);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.texVorticity);
+            this.gl.uniform1i(uniforms.vorticity, 6);
+        }
 
-        this.gl.activeTexture(this.gl.TEXTURE1);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
-        this.gl.uniform1i(this.uniforms.uy, 1);
-        
-        this.gl.activeTexture(this.gl.TEXTURE2);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, texDensity); 
-        this.gl.uniform1i(this.gl.getUniformLocation(this.program, "u_rho"), 2);
-
-        this.gl.activeTexture(this.gl.TEXTURE3);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texDye);
-        this.gl.uniform1i(this.uniforms.dye, 3);
-
-        this.gl.activeTexture(this.gl.TEXTURE4);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texObs);
-        this.gl.uniform1i(this.uniforms.obs, 4);
-
-        this.gl.activeTexture(this.gl.TEXTURE5);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texTemp);
-        this.gl.uniform1i(this.uniforms.temp, 5);
-
-        this.gl.activeTexture(this.gl.TEXTURE6);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.texVorticity);
-        this.gl.uniform1i(this.uniforms.vorticity, 6);
-
-        this.gl.uniform1i(this.uniforms.mode, vizParams.mode);
-        this.gl.uniform1f(this.uniforms.contrast, vizParams.contrast);
-        this.gl.uniform1f(this.uniforms.brightness, vizParams.brightness);
-        this.gl.uniform1f(this.uniforms.bias, vizParams.bias);
-        this.gl.uniform1f(this.uniforms.power, vizParams.power);
-        this.gl.uniform1i(this.uniforms.colorScheme, vizParams.colorScheme);
+        this.gl.uniform1f(uniforms.contrast, vizParams.contrast);
+        this.gl.uniform1f(uniforms.brightness, vizParams.brightness);
+        this.gl.uniform1f(uniforms.bias, vizParams.bias);
+        this.gl.uniform1f(uniforms.power, vizParams.power);
+        this.gl.uniform1i(uniforms.colorScheme, vizParams.colorScheme);
 
         const ocolor = vizParams.obstacleColor;
         const r_o = parseInt(ocolor.slice(1, 3), 16) / 255;
         const g_o = parseInt(ocolor.slice(3, 5), 16) / 255;
         const b_o = parseInt(ocolor.slice(5, 7), 16) / 255;
-        this.gl.uniform3f(this.uniforms.obstacleColor, r_o, g_o, b_o);
+        this.gl.uniform3f(uniforms.obstacleColor, r_o, g_o, b_o);
         
         const bgcolor = vizParams.backgroundColor;
         const r_bg = parseInt(bgcolor.slice(1, 3), 16) / 255;
         const g_bg = parseInt(bgcolor.slice(3, 5), 16) / 255;
         const b_bg = parseInt(bgcolor.slice(5, 7), 16) / 255;
-        this.gl.uniform3f(this.uniforms.backgroundColor, r_bg, g_bg, b_bg);
+        this.gl.uniform3f(uniforms.backgroundColor, r_bg, g_bg, b_bg);
         
-        this.gl.uniform1i(this.uniforms.vorticityBipolar, vizParams.vorticityBipolar);
+        if (uniforms.vorticityBipolar) {
+            this.gl.uniform1i(uniforms.vorticityBipolar, vizParams.vorticityBipolar);
+        }
 
         this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
         this.gl.bindVertexArray(null);
-        
-        this.gl.deleteTexture(texDensity);
 
         if (vizParams.particles && vizParams.particles.show) {
             this.drawParticles(vizParams); 

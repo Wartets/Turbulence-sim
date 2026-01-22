@@ -116,29 +116,7 @@ void main() {
     outColor = vec4(curl, 0.0, 0.0, 1.0);
 }`;
 
-const FS_SOURCE = `#version 300 es
-precision highp float;
-uniform sampler2D u_ux;
-uniform sampler2D u_uy;
-uniform sampler2D u_rho;
-uniform sampler2D u_dye;
-uniform sampler2D u_obs;
-uniform sampler2D u_temp;
-uniform sampler2D u_vorticity;
-
-uniform int u_mode;
-uniform float u_contrast;
-uniform float u_brightness;
-uniform float u_bias;
-uniform float u_power;
-uniform int u_color_scheme;
-uniform vec3 u_obstacle_color;
-uniform vec3 u_background_color;
-uniform bool u_vorticity_bipolar;
-
-in vec2 v_uv;
-out vec4 outColor;
-
+const COMMON_FS_PALETTES = `
 vec3 inferno(float t) {
     float r = 0.0002 + 1.2587 * t + 2.7681 * pow(t, 2.0) - 8.3619 * pow(t, 3.0);
     float g = 0.0016 + 0.1477 * t + 3.1206 * pow(t, 2.0) - 2.8093 * pow(t, 3.0);
@@ -204,117 +182,248 @@ vec3 coolwarm(float t) {
 
 vec3 getPalette(float val, int scheme) {
     val = clamp(val, 0.0, 1.0);
-    switch(scheme) {
-        case 0: return inferno(val);
-        case 1: return magma(val);
-        case 2: return plasma(val);
-        case 3: return viridis(val);
-        case 4: return turbo(val);
-        case 5: return vec3(val);
-        case 6: return vec3(0.1, 0.3, 0.6) + vec3(0.8, 0.7, 0.4) * val;
-        case 7: return cividis(val);
-        case 8: return coolwarm(val);
-        default: return inferno(val);
-    }
+    if (scheme == 0) return inferno(val);
+    else if (scheme == 1) return magma(val);
+    else if (scheme == 2) return plasma(val);
+    else if (scheme == 3) return viridis(val);
+    else if (scheme == 4) return turbo(val);
+    else if (scheme == 5) return vec3(val);
+    else if (scheme == 6) return vec3(0.1, 0.3, 0.6) + vec3(0.8, 0.7, 0.4) * val;
+    else if (scheme == 7) return cividis(val);
+    else if (scheme == 8) return coolwarm(val);
+    return inferno(val);
 }
+`;
 
+const VORTICITY_VIS_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_vorticity;
+uniform sampler2D u_obs;
+
+uniform float u_contrast;
+uniform float u_brightness;
+uniform float u_bias;
+uniform float u_power;
+uniform int u_color_scheme;
+uniform vec3 u_obstacle_color;
+uniform vec3 u_background_color;
+uniform bool u_vorticity_bipolar;
+
+in vec2 v_uv;
+out vec4 outColor;
+` + COMMON_FS_PALETTES + `
 void main() {
-    float obstacle_val = texture(u_obs, v_uv).r;
-    if (obstacle_val > 0.1) {
+    if (texture(u_obs, v_uv).r > 0.1) {
+        outColor = vec4(u_obstacle_color, 1.0);
+        return;
+    }
+
+    float curl = texture(u_vorticity, v_uv).r;
+    float raw = curl - u_bias;
+    float val;
+    vec3 color;
+    float activity;
+
+    if (u_vorticity_bipolar) {
+        float scaled = raw * u_contrast * 0.5;
+        float signedPow = sign(scaled) * pow(abs(scaled), u_power);
+        val = signedPow * 0.5 + 0.5;
+        activity = abs(val - 0.5) * 2.0; 
+        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
+    } else {
+        val = abs(raw) * u_contrast;
+        val = pow(max(0.0, val), u_power);
+        activity = val;
+        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
+    }
+
+    vec3 fluid_color = color * u_brightness;
+    
+    vec3 final_color;
+    if (u_vorticity_bipolar) {
+        final_color = mix(u_background_color, fluid_color, clamp(u_brightness, 0.0, 1.0));
+    } else {
+        float intensity = clamp(activity * 5.0, 0.0, 1.0);
+        final_color = mix(u_background_color, fluid_color, intensity);
+    }
+
+    outColor = vec4(final_color, 1.0);
+}
+`;
+
+const VELOCITY_VIS_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_ux;
+uniform sampler2D u_uy;
+uniform sampler2D u_obs;
+
+uniform float u_contrast;
+uniform float u_brightness;
+uniform float u_bias;
+uniform float u_power;
+uniform int u_color_scheme;
+uniform vec3 u_obstacle_color;
+uniform vec3 u_background_color;
+
+in vec2 v_uv;
+out vec4 outColor;
+` + COMMON_FS_PALETTES + `
+void main() {
+    if (texture(u_obs, v_uv).r > 0.1) {
         outColor = vec4(u_obstacle_color, 1.0);
         return;
     }
 
     float ux = texture(u_ux, v_uv).r;
     float uy = texture(u_uy, v_uv).r;
+    float speed = sqrt(ux*ux + uy*uy);
+    float val = max(0.0, speed - u_bias) * 4.0 * u_contrast;
+    val = pow(max(0.0, val), u_power);
     
-    vec3 color = vec3(0.0);
-    float val = 0.0;
-    float activity = 0.0;
-
-    if (u_mode == 0) { 
-        float curl = texture(u_vorticity, v_uv).r;
-        float raw = curl - u_bias;
-        
-        if (u_vorticity_bipolar) {
-            float scaled = raw * u_contrast * 0.5;
-            float signedPow = sign(scaled) * pow(abs(scaled), u_power);
-            val = signedPow * 0.5 + 0.5;
-            activity = abs(val - 0.5) * 2.0; 
-            color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
-        } else {
-            val = abs(raw) * u_contrast;
-            val = pow(max(0.0, val), u_power);
-            activity = val;
-            color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
-        }
-    } 
-    else if (u_mode == 1) { 
-        // Velocity
-        float speed = sqrt(ux*ux + uy*uy);
-        val = max(0.0, speed - u_bias) * 4.0 * u_contrast;
-        val = pow(max(0.0, val), u_power);
-        activity = val;
-        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
-    } 
-    else if (u_mode == 2) { 
-        // Density/Dye
-        float dye = texture(u_dye, v_uv).r;
-        val = max(0.0, dye - u_bias) * u_contrast;
-        val = pow(max(0.0, val), u_power);
-        activity = val;
-        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
-    }
-    else if (u_mode == 3) {
-        // Temperature
-        float temp = texture(u_temp, v_uv).r;
-        float normT = temp * 0.1;
-        
-        if (u_vorticity_bipolar) {
-            float scaled = (normT - u_bias) * u_contrast;
-            float signedPow = sign(scaled) * pow(abs(scaled), u_power);
-            val = signedPow * 0.5 + 0.5;
-            activity = abs(val - 0.5) * 2.0;
-        } else {
-            val = max(0.0, normT - u_bias + 0.5) * u_contrast;
-            val = pow(max(0.0, val), u_power);
-            activity = abs(temp * 0.1); 
-        }
-        
-        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
-    }
-    else if (u_mode == 4) {
-        // Pressure (Scalar field of density deviation)
-        float u_ux_val = texture(u_ux, v_uv).r;
-        float u_uy_val = texture(u_uy, v_uv).r;
-        
-        float v_sq = u_ux_val*u_ux_val + u_uy_val*u_uy_val;
-        
-        float feq0 = 4.0/9.0 * 1.0 * (1.0 - 1.5 * v_sq);
-        float f0 = texture(u_rho, v_uv).r; 
-        
-        float pressure = f0; 
-        float deviation = (pressure - 1.0) * 8.0; 
-        
-        float raw = deviation - u_bias;
-        float scaled = raw * u_contrast;
-        float signedPow = sign(scaled) * pow(abs(scaled), u_power);
-        val = signedPow * 0.5 + 0.5;
-        
-        activity = abs(val - 0.5) * 2.0;
-        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
-    }
-
+    vec3 color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
     vec3 fluid_color = color * u_brightness;
-    float intensity = clamp(activity * 5.0, 0.0, 1.0);
-    vec3 final_color = mix(u_background_color, fluid_color, intensity);
-    
-    if (u_mode == 1 || (u_mode == 0 && u_vorticity_bipolar) || (u_mode == 3 && u_vorticity_bipolar) || u_mode == 4) {
-         final_color = mix(u_background_color, fluid_color, clamp(u_brightness, 0.0, 1.0));
-    }
+    vec3 final_color = mix(u_background_color, fluid_color, clamp(u_brightness, 0.0, 1.0));
 
     outColor = vec4(final_color, 1.0);
-}`;
+}
+`;
+
+const DYE_VIS_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_dye;
+uniform sampler2D u_obs;
+
+uniform float u_contrast;
+uniform float u_brightness;
+uniform float u_bias;
+uniform float u_power;
+uniform int u_color_scheme;
+uniform vec3 u_obstacle_color;
+uniform vec3 u_background_color;
+
+in vec2 v_uv;
+out vec4 outColor;
+` + COMMON_FS_PALETTES + `
+void main() {
+    if (texture(u_obs, v_uv).r > 0.1) {
+        outColor = vec4(u_obstacle_color, 1.0);
+        return;
+    }
+
+    float dye = texture(u_dye, v_uv).r;
+    float val = max(0.0, dye - u_bias) * u_contrast;
+    val = pow(max(0.0, val), u_power);
+    
+    vec3 color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
+    vec3 fluid_color = color * u_brightness;
+    float intensity = clamp(val * 5.0, 0.0, 1.0);
+    vec3 final_color = mix(u_background_color, fluid_color, intensity);
+
+    outColor = vec4(final_color, 1.0);
+}
+`;
+
+const TEMPERATURE_VIS_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_temp;
+uniform sampler2D u_obs;
+
+uniform float u_contrast;
+uniform float u_brightness;
+uniform float u_bias;
+uniform float u_power;
+uniform int u_color_scheme;
+uniform vec3 u_obstacle_color;
+uniform vec3 u_background_color;
+uniform bool u_vorticity_bipolar;
+
+in vec2 v_uv;
+out vec4 outColor;
+` + COMMON_FS_PALETTES + `
+void main() {
+    if (texture(u_obs, v_uv).r > 0.1) {
+        outColor = vec4(u_obstacle_color, 1.0);
+        return;
+    }
+
+    float temp = texture(u_temp, v_uv).r;
+    float normT = temp * 0.1;
+    float val;
+    float activity;
+        
+    if (u_vorticity_bipolar) {
+        float scaled = (normT - u_bias) * u_contrast;
+        float signedPow = sign(scaled) * pow(abs(scaled), u_power);
+        val = signedPow * 0.5 + 0.5;
+        activity = abs(val - 0.5) * 2.0;
+    } else {
+        val = max(0.0, normT - u_bias + 0.5) * u_contrast;
+        val = pow(max(0.0, val), u_power);
+        activity = abs(temp * 0.1); 
+    }
+        
+    vec3 color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
+    vec3 fluid_color = color * u_brightness;
+
+    vec3 final_color;
+    if (u_vorticity_bipolar) {
+         final_color = mix(u_background_color, fluid_color, clamp(u_brightness, 0.0, 1.0));
+    } else {
+        float intensity = clamp(activity * 5.0, 0.0, 1.0);
+        final_color = mix(u_background_color, fluid_color, intensity);
+    }
+    
+    outColor = vec4(final_color, 1.0);
+}
+`;
+
+const PRESSURE_VIS_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_ux;
+uniform sampler2D u_uy;
+uniform sampler2D u_rho;
+uniform sampler2D u_obs;
+
+uniform float u_contrast;
+uniform float u_brightness;
+uniform float u_bias;
+uniform float u_power;
+uniform int u_color_scheme;
+uniform vec3 u_obstacle_color;
+uniform vec3 u_background_color;
+
+in vec2 v_uv;
+out vec4 outColor;
+` + COMMON_FS_PALETTES + `
+void main() {
+    if (texture(u_obs, v_uv).r > 0.1) {
+        outColor = vec4(u_obstacle_color, 1.0);
+        return;
+    }
+
+    float u_ux_val = texture(u_ux, v_uv).r;
+    float u_uy_val = texture(u_uy, v_uv).r;
+    
+    float v_sq = u_ux_val*u_ux_val + u_uy_val*u_uy_val;
+    
+    float feq0 = 4.0/9.0 * 1.0 * (1.0 - 1.5 * v_sq);
+    float f0 = texture(u_rho, v_uv).r; 
+    
+    float pressure = f0; 
+    float deviation = (pressure - 1.0) * 8.0; 
+    
+    float raw = deviation - u_bias;
+    float scaled = raw * u_contrast;
+    float signedPow = sign(scaled) * pow(abs(scaled), u_power);
+    float val = signedPow * 0.5 + 0.5;
+    
+    vec3 color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
+    vec3 fluid_color = color * u_brightness;
+    vec3 final_color = mix(u_background_color, fluid_color, clamp(u_brightness, 0.0, 1.0));
+
+    outColor = vec4(final_color, 1.0);
+}
+`;
 
 const PARTICLE_VS = `#version 300 es
 layout(location = 0) in float a_index;

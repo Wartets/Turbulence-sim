@@ -89,6 +89,47 @@ FluidEngine::FluidEngine(int width, int height)
     setHandlers();
 }
 
+void FluidEngine::setHandlers() {
+    auto selectHandler = [&](int type, WallHandler noSlip, WallHandler slip, WallHandler moving) {
+        switch(type) {
+            case 2: return slip;
+            case 3: return moving;
+            default: return noSlip;
+        }
+    };
+
+    leftHandler = selectHandler(boundaryLeft, &FluidEngine::handlerNoSlip, &FluidEngine::handlerSlipV, &FluidEngine::handlerMovingLeft);
+    rightHandler = selectHandler(boundaryRight, &FluidEngine::handlerNoSlip, &FluidEngine::handlerSlipV, &FluidEngine::handlerMovingRight);
+    bottomHandler = selectHandler(boundaryBottom, &FluidEngine::handlerNoSlip, &FluidEngine::handlerSlipH, &FluidEngine::handlerMovingBottom);
+    topHandler = selectHandler(boundaryTop, &FluidEngine::handlerNoSlip, &FluidEngine::handlerSlipH, &FluidEngine::handlerMovingTop);
+}
+
+void FluidEngine::handlerNoSlip(int& dest_k, float& f_bounce, int k, int idx) const {}
+
+void FluidEngine::handlerSlipV(int& dest_k, float& f_bounce, int k, int idx) const {
+    dest_k = slip_v[k];
+}
+
+void FluidEngine::handlerSlipH(int& dest_k, float& f_bounce, int k, int idx) const {
+    dest_k = slip_h[k];
+}
+
+void FluidEngine::handlerMovingLeft(int& dest_k, float& f_bounce, int k, int idx) const {
+    f_bounce += 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityLeftX + cy[k] * movingWallVelocityLeftY);
+}
+
+void FluidEngine::handlerMovingRight(int& dest_k, float& f_bounce, int k, int idx) const {
+    f_bounce += 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityRightX + cy[k] * movingWallVelocityRightY);
+}
+
+void FluidEngine::handlerMovingTop(int& dest_k, float& f_bounce, int k, int idx) const {
+    f_bounce += 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityTopX + cy[k] * movingWallVelocityTopY);
+}
+
+void FluidEngine::handlerMovingBottom(int& dest_k, float& f_bounce, int k, int idx) const {
+    f_bounce += 6.0f * weights[k] * rho[idx] * (cx[k] * movingWallVelocityBottomX + cy[k] * movingWallVelocityBottomY);
+}
+
 void FluidEngine::setBFECC(bool enable) {
     useBFECC = enable;
 }

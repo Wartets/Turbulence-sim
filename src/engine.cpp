@@ -16,7 +16,7 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), smagorinskyConstant(0.0f), temperatureViscosity(0.0f), flowBehaviorIndex(1.0f), consistencyIndex(0.0f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0), barriersDirty(true) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), smagorinskyConstant(0.0f), temperatureViscosity(0.0f), flowBehaviorIndex(1.0f), consistencyIndex(0.0f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0), barriersDirty(true), dataVersion(1) {
     std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
     int size = w * h;
     for(int k = 0; k < 9; ++k) {
@@ -41,6 +41,10 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     for (int k = 0; k < 9; ++k) {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
+}
+
+unsigned int FluidEngine::getDataVersion() {
+    return dataVersion.load();
 }
 
 void FluidEngine::setFlowBehaviorIndex(float n) {
@@ -282,6 +286,7 @@ void FluidEngine::applyDimensionalBrush(int x, int y, int radius, int mode, floa
             for(int k=0; k<9; k++) f[k][idx] = feq[k];
         }
     }
+    dataVersion++;
 }
 
 void FluidEngine::applyGenericBrush(int x, int y, int radius, float fx, float fy, float densityAmt, float tempAmt, float falloffParam, float angle, float aspectRatio, int shape, int falloffMode) {
@@ -357,6 +362,7 @@ void FluidEngine::applyGenericBrush(int x, int y, int radius, float fx, float fy
             }
         }
     }
+    dataVersion++;
 }
 
 void FluidEngine::addTemperature(int x, int y, float amount) {
@@ -366,6 +372,7 @@ void FluidEngine::addTemperature(int x, int y, float amount) {
     if (barriers[idx]) return;
 
     temperature[idx] += amount;
+    dataVersion++;
 }
 
 void FluidEngine::limitVelocity(float &u, float &v) {
@@ -395,6 +402,7 @@ void FluidEngine::addForce(int x, int y, float fx, float fy) {
     float feq[9];
     equilibrium(rho[idx], ux[idx], uy[idx], feq);
     for(int k=0; k<9; k++) f[k][idx] = feq[k];
+    dataVersion++;
 }
 
 void FluidEngine::addDensity(int x, int y, float amount) {
@@ -404,6 +412,7 @@ void FluidEngine::addDensity(int x, int y, float amount) {
     if (barriers[idx]) return;
 
     dye[idx] += amount;
+    dataVersion++;
 }
 
 void FluidEngine::addObstacle(int x, int y, int radius, bool remove, float angle, float aspectRatio, int shape) {
@@ -456,6 +465,7 @@ void FluidEngine::addObstacle(int x, int y, int radius, bool remove, float angle
         }
     }
     barriersDirty.store(true);
+    dataVersion++;
 }
 
 void FluidEngine::reset() {
@@ -474,6 +484,7 @@ void FluidEngine::reset() {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
     barriersDirty.store(true);
+    dataVersion++;
 }
 
 void FluidEngine::clearRegion(int x, int y, int radius) {
@@ -499,6 +510,7 @@ void FluidEngine::clearRegion(int x, int y, int radius) {
         }
     }
     barriersDirty.store(true);
+    dataVersion++;
 }
 
 void FluidEngine::step(int iterations) {
@@ -507,6 +519,7 @@ void FluidEngine::step(int iterations) {
         advectDye();
         advectTemperature();
     }
+    dataVersion++;
 }
 
 void FluidEngine::collideAndStream() {
@@ -1063,6 +1076,7 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("addObstacle", emscripten::select_overload<void(int, int, int, bool, float, float, int)>(&FluidEngine::addObstacle))
         .function("applyDimensionalBrush", &FluidEngine::applyDimensionalBrush)
         .function("applyGenericBrush", &FluidEngine::applyGenericBrush)
+        .function("getDataVersion", &FluidEngine::getDataVersion)
         .function("getDensityView", &FluidEngine::getDensityView)
         .function("getVelocityXView", &FluidEngine::getVelocityXView)
         .function("getVelocityYView", &FluidEngine::getVelocityYView)

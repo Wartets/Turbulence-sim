@@ -1,5 +1,5 @@
 const VS_SOURCE = `#version 300 es
-in vec2 a_position;
+layout(location = 0) in vec2 a_position;
 out vec2 v_uv;
 void main() {
     v_uv = a_position * 0.5 + 0.5;
@@ -7,7 +7,7 @@ void main() {
 }`;
 
 const PARTICLE_UPDATE_VS = `#version 300 es
-in vec2 a_position;
+layout(location = 0) in vec2 a_position;
 void main() {
     gl_Position = vec4(a_position, 0.0, 1.0);
 }`;
@@ -285,7 +285,7 @@ void main() {
 }`;
 
 const PARTICLE_VS = `#version 300 es
-in float a_index;
+layout(location = 0) in float a_index;
 uniform sampler2D u_positions;
 uniform vec2 u_resolution;
 uniform float u_particle_size;
@@ -309,7 +309,7 @@ void main() {
 }`;
 
 const BRUSH_VS = `#version 300 es
-in vec2 a_position;
+layout(location = 0) in vec2 a_position;
 uniform vec2 u_resolution;
 uniform vec2 u_center;
 uniform float u_radius;
@@ -359,7 +359,7 @@ void main() {
 }`;
 
 const POST_VS = `#version 300 es
-in vec2 a_position;
+layout(location = 0) in vec2 a_position;
 out vec2 v_uv;
 void main() {
     v_uv = a_position * 0.5 + 0.5;

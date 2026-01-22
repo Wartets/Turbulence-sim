@@ -34,6 +34,8 @@ public:
     void setConsistencyIndex(float k);
 
     void setThreadCount(int count);
+    
+    unsigned int getDataVersion();
 
     emscripten::val getDensityView();
     emscripten::val getVelocityXView();
@@ -73,6 +75,8 @@ private:
     
     int threadCount;
     
+    std::atomic<unsigned int> dataVersion;
+
     std::vector<float> f[9];     
     std::vector<float> f_new[9]; 
     std::vector<float> rho;   

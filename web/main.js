@@ -299,6 +299,14 @@ createFluidEngine().then(Module => {
     falloffTypeController.onChange(updateBrushUI);
 
     let simWidth, simHeight;
+    
+    let uploadedVersions = {
+        ux: 0,
+        uy: 0,
+        dye: 0,
+        temp: 0,
+        density: 0
+    };
 
     function initSimulation() {
         if (requestId) cancelAnimationFrame(requestId);
@@ -314,6 +322,14 @@ createFluidEngine().then(Module => {
         simWidth = Math.round(baseRes * aspect);
 
         engine = new Module.FluidEngine(simWidth, simHeight);
+        
+        uploadedVersions = {
+            ux: 0,
+            uy: 0,
+            dye: 0,
+            temp: 0,
+            density: 0
+        };
         
         console.log("FluidEngine instance created.");
         if (engine) {
@@ -512,26 +528,39 @@ createFluidEngine().then(Module => {
             }
         }
 
+        const currentVersion = engine.getDataVersion();
         const views = {};
         const vizMode = params.visualization.mode;
         const particlesOn = params.particles.show;
 
-        if (vizMode === 0 || vizMode === 1 || vizMode === 4 || particlesOn) {
+        const needsUxUy = (vizMode === 0 || vizMode === 1 || vizMode === 4 || particlesOn);
+        if (needsUxUy && uploadedVersions.ux !== currentVersion) {
             views.ux = engine.getVelocityXView();
             views.uy = engine.getVelocityYView();
+            uploadedVersions.ux = currentVersion;
+            uploadedVersions.uy = currentVersion;
         }
-        if (vizMode === 2) {
+
+        const needsDye = (vizMode === 2);
+        if (needsDye && uploadedVersions.dye !== currentVersion) {
             views.dye = engine.getDyeView();
+            uploadedVersions.dye = currentVersion;
         }
-        if (vizMode === 3) {
+
+        const needsTemp = (vizMode === 3);
+        if (needsTemp && uploadedVersions.temp !== currentVersion) {
             views.temp = engine.getTemperatureView();
+            uploadedVersions.temp = currentVersion;
         }
-        if (vizMode === 4) { 
+
+        const needsDensity = (vizMode === 4);
+        if (needsDensity && uploadedVersions.density !== currentVersion) { 
             views.density = engine.getDensityView();
+            uploadedVersions.density = currentVersion;
         }
         
         const obsDirty = engine.checkBarrierDirty();
-        if (obsDirty || particlesOn) {
+        if (obsDirty) {
             views.obs = engine.getBarrierView();
         }
 

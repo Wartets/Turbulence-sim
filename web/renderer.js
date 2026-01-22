@@ -32,7 +32,15 @@ class Renderer {
             -1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1
         ]), this.gl.STATIC_DRAW);
 
+        this.quadVAO = this.gl.createVertexArray();
+        this.gl.bindVertexArray(this.quadVAO);
+        this.gl.enableVertexAttribArray(0);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
+        this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 0, 0);
+        this.gl.bindVertexArray(null);
+
         this.particleIndexBuffer = this.gl.createBuffer();
+        this.particleVAO = this.gl.createVertexArray();
         this.particleFBO = this.gl.createFramebuffer();
         this.texPartA = null;
         this.texPartB = null;
@@ -47,6 +55,13 @@ class Renderer {
         ];
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
         this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(brushVerts), this.gl.STATIC_DRAW);
+
+        this.brushVAO = this.gl.createVertexArray();
+        this.gl.bindVertexArray(this.brushVAO);
+        this.gl.enableVertexAttribArray(0);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
+        this.gl.vertexAttribPointer(0, 2, this.gl.FLOAT, false, 0, 0);
+        this.gl.bindVertexArray(null);
 
         this.initPostProcessing();
 
@@ -128,6 +143,12 @@ class Renderer {
         
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleIndexBuffer);
         this.gl.bufferData(this.gl.ARRAY_BUFFER, indices, this.gl.STATIC_DRAW);
+
+        this.gl.bindVertexArray(this.particleVAO);
+        this.gl.enableVertexAttribArray(0);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleIndexBuffer);
+        this.gl.vertexAttribPointer(0, 1, this.gl.FLOAT, false, 0, 0);
+        this.gl.bindVertexArray(null);
     }
 
     initPostProcessing() {
@@ -210,12 +231,9 @@ class Renderer {
         this.gl.uniform2f(this.particleUpdateUniforms.simDim, this.width, this.height);
         this.gl.uniform1f(this.particleUpdateUniforms.seed, Math.random() * 100.0);
 
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
-        const positionLoc = this.gl.getAttribLocation(this.particleUpdateProgram, "a_position");
-        this.gl.enableVertexAttribArray(positionLoc);
-        this.gl.vertexAttribPointer(positionLoc, 2, this.gl.FLOAT, false, 0, 0);
-
+        this.gl.bindVertexArray(this.quadVAO);
         this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+        this.gl.bindVertexArray(null);
 
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
 
@@ -240,10 +258,7 @@ class Renderer {
         this.gl.disable(this.gl.BLEND);
         this.gl.useProgram(this.program);
         
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
-        const positionLoc = this.gl.getAttribLocation(this.program, "a_position");
-        this.gl.enableVertexAttribArray(positionLoc);
-        this.gl.vertexAttribPointer(positionLoc, 2, this.gl.FLOAT, false, 0, 0);
+        this.gl.bindVertexArray(this.quadVAO);
 
         if (views.ux) {
             this.gl.activeTexture(this.gl.TEXTURE0);
@@ -255,10 +270,9 @@ class Renderer {
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
             this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.uy);
         }
-        // Need density texture for Pressure visualization
+        
         const texDensity = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
         if (vizParams.mode === 4 || vizParams.mode === 2) { 
-             const densityView = views.density || views.dye; 
              if (views.density) { 
                  this.gl.activeTexture(this.gl.TEXTURE2);
                  this.gl.bindTexture(this.gl.TEXTURE_2D, texDensity);
@@ -328,6 +342,7 @@ class Renderer {
         this.gl.uniform1i(this.uniforms.vorticityBipolar, vizParams.vorticityBipolar);
 
         this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+        this.gl.bindVertexArray(null);
         
         this.gl.deleteTexture(texDensity);
 
@@ -357,12 +372,9 @@ class Renderer {
             this.gl.uniform1f(this.postUniforms.radius, postParams.radius);
             this.gl.uniform1f(this.postUniforms.intensity, postParams.intensity);
             
-            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
-            const posLoc = this.gl.getAttribLocation(this.postProgram, "a_position");
-            this.gl.enableVertexAttribArray(posLoc);
-            this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
-            
+            this.gl.bindVertexArray(this.quadVAO);
             this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+            this.gl.bindVertexArray(null);
         }
     }
 
@@ -374,11 +386,7 @@ class Renderer {
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE);
 
         this.gl.useProgram(this.particleRenderProgram);
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.particleIndexBuffer);
-        
-        const posLoc = this.gl.getAttribLocation(this.particleRenderProgram, "a_index");
-        this.gl.enableVertexAttribArray(posLoc);
-        this.gl.vertexAttribPointer(posLoc, 1, this.gl.FLOAT, false, 0, 0);
+        this.gl.bindVertexArray(this.particleVAO);
         
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPartA);
@@ -394,11 +402,13 @@ class Renderer {
         this.gl.uniform4f(this.particleRenderUniforms.color, r, g, b, params.particles.opacity);
         
         this.gl.drawArrays(this.gl.POINTS, 0, this.particleCount);
+        this.gl.bindVertexArray(null);
         
         this.gl.disable(this.gl.BLEND);
     }
 
     drawBrush(x, y, radius, color, angle, aspect, shape) {
+        this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
         this.gl.enable(this.gl.BLEND);
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
         this.gl.useProgram(this.brushProgram);
@@ -412,12 +422,9 @@ class Renderer {
         this.gl.uniform1f(this.brushUniforms.aspect, aspect);
         this.gl.uniform1i(this.brushUniforms.shape, shape);
 
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.brushBuffer);
-        const posLoc = this.gl.getAttribLocation(this.brushProgram, "a_position");
-        this.gl.enableVertexAttribArray(posLoc);
-        this.gl.vertexAttribPointer(posLoc, 2, this.gl.FLOAT, false, 0, 0);
-
+        this.gl.bindVertexArray(this.brushVAO);
         this.gl.drawArrays(this.gl.TRIANGLES, 0, this.brushVertexCount);
+        this.gl.bindVertexArray(null);
         
         this.gl.disable(this.gl.BLEND);
     }

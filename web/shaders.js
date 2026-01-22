@@ -32,60 +32,62 @@ float rand(vec2 co) {
 }
 
 void main() {
-    vec2 p = a_pos;
-    
-    vec2 uv1 = p / u_sim_dim;
-    vec2 v1 = vec2(texture(u_ux, uv1).r, texture(u_uy, uv1).r);
+    vec2 current_pos = a_pos;
+    vec2 next_pos;
 
-    vec2 p_mid = p + v1 * u_dt * 0.5;
-    vec2 uv2 = p_mid / u_sim_dim;
-    vec2 v2 = vec2(texture(u_ux, uv2).r, texture(u_uy, uv2).r);
+    bool is_alive = current_pos.x > -100.0;
+    bool starts_in_obstacle = is_alive && (texture(u_obs, current_pos / u_sim_dim).r > 0.1);
+    bool needs_respawn = !is_alive || starts_in_obstacle;
 
-    p += v2 * u_dt;
-    
-    bool should_respawn = false;
-
-    if (p.x < 0.0) {
-        if (u_boundary_conditions.x == 0.0) { p.x += u_sim_dim.x; }
-        else if (u_boundary_conditions.x > 3.5) { should_respawn = true; }
-        else { p.x = 0.0; }
-    } else if (p.x >= u_sim_dim.x) {
-        if (u_boundary_conditions.y == 0.0) { p.x -= u_sim_dim.x; }
-        else if (u_boundary_conditions.y > 3.5) { should_respawn = true; }
-        else { p.x = u_sim_dim.x - 1.0; }
-    }
-
-    if (p.y < 0.0) {
-        if (u_boundary_conditions.z == 0.0) { p.y += u_sim_dim.y; }
-        else if (u_boundary_conditions.z > 3.5) { should_respawn = true; }
-        else { p.y = 0.0; }
-    } else if (p.y >= u_sim_dim.y) {
-        if (u_boundary_conditions.w == 0.0) { p.y -= u_sim_dim.y; }
-        else if (u_boundary_conditions.w > 3.5) { should_respawn = true; }
-        else { p.y = u_sim_dim.y - 1.0; }
-    }
-
-    vec2 newUV = p / u_sim_dim;
-    float oldObs = texture(u_obs, uv1).r;
-    float newObs = texture(u_obs, newUV).r;
-
-    bool isDead = (a_pos.x < -100.0);
-    bool hitObstacle = (oldObs > 0.1) || (newObs > 0.1);
-    bool randomRespawn = (rand(vec2(u_seed, a_rand.x + a_rand.y + float(gl_VertexID))) > 0.999);
-
-    if (isDead || hitObstacle || randomRespawn || should_respawn) {
-        float rx = rand(vec2(u_seed + a_rand.x, float(gl_VertexID) * 0.3)) * u_sim_dim.x;
-        float ry = rand(vec2(u_seed - a_rand.y, float(gl_VertexID) * 0.4)) * u_sim_dim.y;
-        vec2 checkUV = vec2(rx, ry) / u_sim_dim;
+    if (is_alive && !starts_in_obstacle) {
+        vec2 uv = current_pos / u_sim_dim;
+        vec2 v = vec2(texture(u_ux, uv).r, texture(u_uy, uv).r);
         
-        if (texture(u_obs, checkUV).r < 0.1) {
-            p = vec2(rx, ry);
-        } else {
-            p = vec2(-200.0, -200.0);
+        vec2 p_mid = current_pos + v * u_dt * 0.5;
+        vec2 v_mid = vec2(texture(u_ux, p_mid / u_sim_dim).r, texture(u_uy, p_mid / u_sim_dim).r);
+        next_pos = current_pos + v_mid * u_dt;
+
+        if (next_pos.x < 0.0) {
+            if (u_boundary_conditions.x == 0.0) { next_pos.x += u_sim_dim.x; }
+            else if (u_boundary_conditions.x > 3.5) { needs_respawn = true; }
+            else { next_pos.x = 0.0; }
+        } else if (next_pos.x >= u_sim_dim.x) {
+            if (u_boundary_conditions.y == 0.0) { next_pos.x -= u_sim_dim.x; }
+            else if (u_boundary_conditions.y > 3.5) { needs_respawn = true; }
+            else { next_pos.x = u_sim_dim.x - 1.0; }
+        }
+
+        if (next_pos.y < 0.0) {
+            if (u_boundary_conditions.z == 0.0) { next_pos.y += u_sim_dim.y; }
+            else if (u_boundary_conditions.z > 3.5) { needs_respawn = true; }
+            else { next_pos.y = 0.0; }
+        } else if (next_pos.y >= u_sim_dim.y) {
+            if (u_boundary_conditions.w == 0.0) { next_pos.y -= u_sim_dim.y; }
+            else if (u_boundary_conditions.w > 3.5) { needs_respawn = true; }
+            else { next_pos.y = u_sim_dim.y - 1.0; }
+        }
+
+        if (texture(u_obs, next_pos / u_sim_dim).r > 0.1) {
+            needs_respawn = true;
+        }
+        if (rand(vec2(u_seed, a_rand.x * a_rand.y + float(gl_VertexID))) > 0.999) {
+            needs_respawn = true;
         }
     }
 
-    v_newPos = p;
+    if (needs_respawn) {
+        float rx = rand(vec2(u_seed + a_rand.x, float(gl_VertexID) * 0.3)) * u_sim_dim.x;
+        float ry = rand(vec2(u_seed - a_rand.y, float(gl_VertexID) * 0.4)) * u_sim_dim.y;
+        vec2 spawn_pos = vec2(rx, ry);
+        
+        if (texture(u_obs, spawn_pos / u_sim_dim).r < 0.1) {
+            next_pos = spawn_pos;
+        } else {
+            next_pos = vec2(-200.0, -200.0);
+        }
+    }
+    
+    v_newPos = next_pos;
     v_newRand = a_rand;
 }`;
 

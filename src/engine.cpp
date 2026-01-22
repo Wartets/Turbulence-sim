@@ -656,172 +656,188 @@ void FluidEngine::collideAndStream() {
             }
         };
 
-        for (int y = startY; y < endY; ++y) {
-            bool boundaryRow = (y == 0 || y == h - 1);
-            if (boundaryRow) {
-                for (int x = 0; x < w; ++x) process_scalar(x, y);
-            } else {
-                process_scalar(0, y);
+        const int BLOCK_SIZE = 32;
 
-                int x = 1;
-                int simd_end = w - 1; 
-                int vec_limit = simd_end - ((simd_end - x) % 4);
-
-                for (; x < vec_limit; x += 4) {
-                    int idx = y * w + x;
-                    
-                    v128_t v_f[9];
-                    for(int k=0; k<9; ++k) v_f[k] = wasm_v128_load(&f[k][idx]);
-
-                    v128_t v_rho = v_f[0];
-                    for(int k=1; k<9; ++k) v_rho = wasm_f32x4_add(v_rho, v_f[k]);
-
-                    v128_t v_ux = wasm_f32x4_mul(v_f[1], v_cx[1]);
-                    v128_t v_uy = wasm_f32x4_mul(v_f[1], v_cy[1]);
-                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[3], v_cx[3]));
-                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[5], v_cx[5]));
-                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[6], v_cx[6]));
-                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[7], v_cx[7]));
-                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[8], v_cx[8]));
-                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[2], v_cy[2]));
-                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[4], v_cy[4]));
-                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[5], v_cy[5]));
-                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[6], v_cy[6]));
-                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[7], v_cy[7]));
-                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[8], v_cy[8]));
-
-                    v128_t v_rho_inv = wasm_f32x4_div(v_one, wasm_f32x4_max(v_rho, wasm_f32x4_splat(1e-6f)));
-                    v_ux = wasm_f32x4_mul(v_ux, v_rho_inv);
-                    v_uy = wasm_f32x4_mul(v_uy, v_rho_inv);
-
-                    v128_t v_forceX = wasm_v128_load(&forceX[idx]);
-                    v128_t v_forceY = wasm_v128_load(&forceY[idx]);
-                    v128_t v_temp = wasm_v128_load(&temperature[idx]);
-
-                    v128_t v_fx = wasm_f32x4_add(v_gravityX, v_forceX);
-                    v128_t v_fy = wasm_f32x4_add(v_gravityY, wasm_f32x4_add(wasm_f32x4_mul(v_buoyancy, v_temp), v_forceY));
-
-                    v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_fx, v_dt));
-                    v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_fy, v_dt));
-
-                    if (velocityDissipation > 0.0f) {
-                        v_ux = wasm_f32x4_mul(v_ux, v_dissipation);
-                        v_uy = wasm_f32x4_mul(v_uy, v_dissipation);
+        for (int by = startY; by < endY; by += BLOCK_SIZE) {
+            int maxY = std::min(by + BLOCK_SIZE, endY);
+            for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
+                int maxX = std::min(bx + BLOCK_SIZE, w);
+                
+                for (int y = by; y < maxY; ++y) {
+                    bool boundaryRow = (y == 0 || y == h - 1);
+                    if (boundaryRow) {
+                        for (int x = bx; x < maxX; ++x) process_scalar(x, y);
+                        continue;
                     }
 
-                    v128_t v_speed = wasm_f32x4_sqrt(wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy)));
-                    v128_t v_mask = wasm_f32x4_gt(v_speed, v_maxVel);
-                    if (wasm_v128_any_true(v_mask)) {
-                        v128_t v_ratio = wasm_f32x4_div(v_maxVel, v_speed);
-                        v_ux = wasm_v128_bitselect(wasm_f32x4_mul(v_ux, v_ratio), v_ux, v_mask);
-                        v_uy = wasm_v128_bitselect(wasm_f32x4_mul(v_uy, v_ratio), v_uy, v_mask);
+                    int x = bx;
+                    if (x == 0) {
+                        process_scalar(0, y);
+                        x = 1;
                     }
 
-                    wasm_v128_store(&rho[idx], v_rho);
-                    wasm_v128_store(&ux[idx], v_ux);
-                    wasm_v128_store(&uy[idx], v_uy);
+                    int limitX = (maxX == w) ? w - 1 : maxX;
 
-                    v128_t v_u2 = wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy));
-                    v128_t v_usq_term = wasm_f32x4_mul(v_u2, v_one_point_five);
-                    
-                    v128_t v_feq[9];
-                    for (int k = 0; k < 9; ++k) {
-                        v128_t v_eu = wasm_f32x4_add(wasm_f32x4_mul(v_cx[k], v_ux), wasm_f32x4_mul(v_cy[k], v_uy));
-                        v128_t v_feq_val = wasm_f32x4_mul(v_weights[k], v_rho);
-                        v128_t v_term = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_eu, v_three));
-                        v_term = wasm_f32x4_add(v_term, wasm_f32x4_sub(wasm_f32x4_mul(wasm_f32x4_mul(v_eu, v_eu), v_four_point_five), v_usq_term));
-                        v_feq[k] = wasm_f32x4_mul(v_feq_val, v_term);
-                    }
-
-                    v128_t v_omega_local = v_base_omega;
-                    
-                    if (useSmagorinsky || useTempVisc || useNonNewtonian) {
-                         v128_t v_tau = wasm_f32x4_div(v_one, v_base_omega);
-                         v128_t v_nu = wasm_f32x4_div(wasm_f32x4_sub(v_tau, v_point_five), v_three);
-                         
-                         if (useTempVisc) {
-                             v128_t v_t_factor = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_tempVisc, v_temp));
-                             v_nu = wasm_f32x4_div(v_nu, v_t_factor);
-                         }
-
-                         if (useSmagorinsky || useNonNewtonian) {
-                             v128_t v_Qxx = wasm_f32x4_splat(0.0f);
-                             v128_t v_Qxy = wasm_f32x4_splat(0.0f);
-                             v128_t v_Qyy = wasm_f32x4_splat(0.0f);
-
-                             for (int k = 0; k < 9; ++k) {
-                                 v128_t v_neq = wasm_f32x4_sub(v_f[k], v_feq[k]);
-                                 v_Qxx = wasm_f32x4_add(v_Qxx, wasm_f32x4_mul(v_cx[k], wasm_f32x4_mul(v_cx[k], v_neq)));
-                                 v_Qxy = wasm_f32x4_add(v_Qxy, wasm_f32x4_mul(v_cx[k], wasm_f32x4_mul(v_cy[k], v_neq)));
-                                 v_Qyy = wasm_f32x4_add(v_Qyy, wasm_f32x4_mul(v_cy[k], wasm_f32x4_mul(v_cy[k], v_neq)));
-                             }
-                             
-                             v128_t v_magS2 = wasm_f32x4_add(wasm_f32x4_mul(v_Qxx, v_Qxx), wasm_f32x4_add(wasm_f32x4_mul(v_two, wasm_f32x4_mul(v_Qxy, v_Qxy)), wasm_f32x4_mul(v_Qyy, v_Qyy)));
-                             v128_t v_magS = wasm_f32x4_sqrt(v_magS2);
-
-                             if (useNonNewtonian) {
-                                float temp_magS[4];
-                                float temp_omega[4];
-                                wasm_v128_store(temp_magS, v_magS);
-                                wasm_v128_store(temp_omega, v_base_omega);
-                                float scale_factors[4];
-                                for(int i=0; i<4; i++) {
-                                    float strain = temp_magS[i] * 1.5f * temp_omega[i];
-                                    scale_factors[i] = 1.0f + k_idx_val * std::pow(strain, n_idx_val - 1.0f);
-                                }
-                                v_nu = wasm_f32x4_mul(v_nu, wasm_v128_load(scale_factors));
-                             }
-
-                             if (useSmagorinsky) {
-                                v128_t v_nu_eddy = wasm_f32x4_mul(wasm_f32x4_mul(v_smag, v_smag), v_magS);
-                                v_nu = wasm_f32x4_add(v_nu, v_nu_eddy);
-                             }
-                         }
-
-                         v128_t v_tau_eff = wasm_f32x4_add(wasm_f32x4_mul(v_three, v_nu), v_point_five);
-                         v_omega_local = wasm_f32x4_div(v_one, v_tau_eff);
-                         v_omega_local = wasm_f32x4_min(wasm_f32x4_max(v_omega_local, wasm_f32x4_splat(0.05f)), wasm_f32x4_splat(1.95f));
-                    }
-                    
-                    v128_t v_one_minus_omega = wasm_f32x4_sub(v_one, v_omega_local);
-                    v128_t v_f_out[9];
-                    for(int k=0; k<9; ++k) {
-                        v_f_out[k] = wasm_f32x4_add(wasm_f32x4_mul(v_f[k], v_one_minus_omega), wasm_f32x4_mul(v_feq[k], v_omega_local));
-                    }
-
-                    float f_out_batch[9][4];
-                    for(int k=0; k<9; ++k) wasm_v128_store((v128_t*)f_out_batch[k], v_f_out[k]);
-
-                    for (int lane = 0; lane < 4; ++lane) {
-                        int curr_x = x + lane;
-                        int curr_idx = idx + lane;
+                    while (x + 4 <= limitX) {
+                        int idx = y * w + x;
                         
-                        if (barriers[curr_idx]) {
-                            rho[curr_idx] = 1.0f;
-                            ux[curr_idx] = 0.0f;
-                            uy[curr_idx] = 0.0f;
-                            for(int k=0; k<9; ++k) f_new[k][curr_idx] = feq_rest[k];
-                            continue;
+                        v128_t v_f[9];
+                        for(int k=0; k<9; ++k) v_f[k] = wasm_v128_load(&f[k][idx]);
+
+                        v128_t v_rho = v_f[0];
+                        for(int k=1; k<9; ++k) v_rho = wasm_f32x4_add(v_rho, v_f[k]);
+
+                        v128_t v_ux = wasm_f32x4_mul(v_f[1], v_cx[1]);
+                        v128_t v_uy = wasm_f32x4_mul(v_f[1], v_cy[1]);
+                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[3], v_cx[3]));
+                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[5], v_cx[5]));
+                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[6], v_cx[6]));
+                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[7], v_cx[7]));
+                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_f[8], v_cx[8]));
+                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[2], v_cy[2]));
+                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[4], v_cy[4]));
+                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[5], v_cy[5]));
+                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[6], v_cy[6]));
+                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[7], v_cy[7]));
+                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_f[8], v_cy[8]));
+
+                        v128_t v_rho_inv = wasm_f32x4_div(v_one, wasm_f32x4_max(v_rho, wasm_f32x4_splat(1e-6f)));
+                        v_ux = wasm_f32x4_mul(v_ux, v_rho_inv);
+                        v_uy = wasm_f32x4_mul(v_uy, v_rho_inv);
+
+                        v128_t v_forceX = wasm_v128_load(&forceX[idx]);
+                        v128_t v_forceY = wasm_v128_load(&forceY[idx]);
+                        v128_t v_temp = wasm_v128_load(&temperature[idx]);
+
+                        v128_t v_fx = wasm_f32x4_add(v_gravityX, v_forceX);
+                        v128_t v_fy = wasm_f32x4_add(v_gravityY, wasm_f32x4_add(wasm_f32x4_mul(v_buoyancy, v_temp), v_forceY));
+
+                        v_ux = wasm_f32x4_add(v_ux, wasm_f32x4_mul(v_fx, v_dt));
+                        v_uy = wasm_f32x4_add(v_uy, wasm_f32x4_mul(v_fy, v_dt));
+
+                        if (velocityDissipation > 0.0f) {
+                            v_ux = wasm_f32x4_mul(v_ux, v_dissipation);
+                            v_uy = wasm_f32x4_mul(v_uy, v_dissipation);
                         }
 
+                        v128_t v_speed = wasm_f32x4_sqrt(wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy)));
+                        v128_t v_mask = wasm_f32x4_gt(v_speed, v_maxVel);
+                        if (wasm_v128_any_true(v_mask)) {
+                            v128_t v_ratio = wasm_f32x4_div(v_maxVel, v_speed);
+                            v_ux = wasm_v128_bitselect(wasm_f32x4_mul(v_ux, v_ratio), v_ux, v_mask);
+                            v_uy = wasm_v128_bitselect(wasm_f32x4_mul(v_uy, v_ratio), v_uy, v_mask);
+                        }
+
+                        wasm_v128_store(&rho[idx], v_rho);
+                        wasm_v128_store(&ux[idx], v_ux);
+                        wasm_v128_store(&uy[idx], v_uy);
+
+                        v128_t v_u2 = wasm_f32x4_add(wasm_f32x4_mul(v_ux, v_ux), wasm_f32x4_mul(v_uy, v_uy));
+                        v128_t v_usq_term = wasm_f32x4_mul(v_u2, v_one_point_five);
+                        
+                        v128_t v_feq[9];
                         for (int k = 0; k < 9; ++k) {
-                            float val = f_out_batch[k][lane];
-                            int n_idx = curr_idx + cx[k] + cy[k] * w;
+                            v128_t v_eu = wasm_f32x4_add(wasm_f32x4_mul(v_cx[k], v_ux), wasm_f32x4_mul(v_cy[k], v_uy));
+                            v128_t v_feq_val = wasm_f32x4_mul(v_weights[k], v_rho);
+                            v128_t v_term = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_eu, v_three));
+                            v_term = wasm_f32x4_add(v_term, wasm_f32x4_sub(wasm_f32x4_mul(wasm_f32x4_mul(v_eu, v_eu), v_four_point_five), v_usq_term));
+                            v_feq[k] = wasm_f32x4_mul(v_feq_val, v_term);
+                        }
+
+                        v128_t v_omega_local = v_base_omega;
+                        
+                        if (useSmagorinsky || useTempVisc || useNonNewtonian) {
+                            v128_t v_tau = wasm_f32x4_div(v_one, v_base_omega);
+                            v128_t v_nu = wasm_f32x4_div(wasm_f32x4_sub(v_tau, v_point_five), v_three);
                             
-                            if (barriers[n_idx]) {
-                                f_new[opp[k]][curr_idx] = val;
-                            } else {
-                                f_new[k][n_idx] = val;
+                            if (useTempVisc) {
+                                v128_t v_t_factor = wasm_f32x4_add(v_one, wasm_f32x4_mul(v_tempVisc, v_temp));
+                                v_nu = wasm_f32x4_div(v_nu, v_t_factor);
+                            }
+
+                            if (useSmagorinsky || useNonNewtonian) {
+                                v128_t v_Qxx = wasm_f32x4_splat(0.0f);
+                                v128_t v_Qxy = wasm_f32x4_splat(0.0f);
+                                v128_t v_Qyy = wasm_f32x4_splat(0.0f);
+
+                                for (int k = 0; k < 9; ++k) {
+                                    v128_t v_neq = wasm_f32x4_sub(v_f[k], v_feq[k]);
+                                    v_Qxx = wasm_f32x4_add(v_Qxx, wasm_f32x4_mul(v_cx[k], wasm_f32x4_mul(v_cx[k], v_neq)));
+                                    v_Qxy = wasm_f32x4_add(v_Qxy, wasm_f32x4_mul(v_cx[k], wasm_f32x4_mul(v_cy[k], v_neq)));
+                                    v_Qyy = wasm_f32x4_add(v_Qyy, wasm_f32x4_mul(v_cy[k], wasm_f32x4_mul(v_cy[k], v_neq)));
+                                }
+                                
+                                v128_t v_magS2 = wasm_f32x4_add(wasm_f32x4_mul(v_Qxx, v_Qxx), wasm_f32x4_add(wasm_f32x4_mul(v_two, wasm_f32x4_mul(v_Qxy, v_Qxy)), wasm_f32x4_mul(v_Qyy, v_Qyy)));
+                                v128_t v_magS = wasm_f32x4_sqrt(v_magS2);
+
+                                if (useNonNewtonian) {
+                                    float temp_magS[4];
+                                    float temp_omega[4];
+                                    wasm_v128_store(temp_magS, v_magS);
+                                    wasm_v128_store(temp_omega, v_base_omega);
+                                    float scale_factors[4];
+                                    for(int i=0; i<4; i++) {
+                                        float strain = temp_magS[i] * 1.5f * temp_omega[i];
+                                        scale_factors[i] = 1.0f + k_idx_val * std::pow(strain, n_idx_val - 1.0f);
+                                    }
+                                    v_nu = wasm_f32x4_mul(v_nu, wasm_v128_load(scale_factors));
+                                }
+
+                                if (useSmagorinsky) {
+                                    v128_t v_nu_eddy = wasm_f32x4_mul(wasm_f32x4_mul(v_smag, v_smag), v_magS);
+                                    v_nu = wasm_f32x4_add(v_nu, v_nu_eddy);
+                                }
+                            }
+
+                            v128_t v_tau_eff = wasm_f32x4_add(wasm_f32x4_mul(v_three, v_nu), v_point_five);
+                            v_omega_local = wasm_f32x4_div(v_one, v_tau_eff);
+                            v_omega_local = wasm_f32x4_min(wasm_f32x4_max(v_omega_local, wasm_f32x4_splat(0.05f)), wasm_f32x4_splat(1.95f));
+                        }
+                        
+                        v128_t v_one_minus_omega = wasm_f32x4_sub(v_one, v_omega_local);
+                        v128_t v_f_out[9];
+                        for(int k=0; k<9; ++k) {
+                            v_f_out[k] = wasm_f32x4_add(wasm_f32x4_mul(v_f[k], v_one_minus_omega), wasm_f32x4_mul(v_feq[k], v_omega_local));
+                        }
+
+                        float f_out_batch[9][4];
+                        for(int k=0; k<9; ++k) wasm_v128_store((v128_t*)f_out_batch[k], v_f_out[k]);
+
+                        for (int lane = 0; lane < 4; ++lane) {
+                            int curr_x = x + lane;
+                            int curr_idx = idx + lane;
+                            
+                            if (barriers[curr_idx]) {
+                                rho[curr_idx] = 1.0f;
+                                ux[curr_idx] = 0.0f;
+                                uy[curr_idx] = 0.0f;
+                                for(int k=0; k<9; ++k) f_new[k][curr_idx] = feq_rest[k];
+                                continue;
+                            }
+
+                            for (int k = 0; k < 9; ++k) {
+                                float val = f_out_batch[k][lane];
+                                int n_idx = curr_idx + cx[k] + cy[k] * w;
+                                
+                                if (barriers[n_idx]) {
+                                    f_new[opp[k]][curr_idx] = val;
+                                } else {
+                                    f_new[k][n_idx] = val;
+                                }
                             }
                         }
+                        x += 4;
+                    }
+
+                    while (x < limitX) {
+                        process_scalar(x, y);
+                        x++;
+                    }
+                    
+                    if (maxX == w && x == w - 1) {
+                         process_scalar(w - 1, y);
                     }
                 }
-
-                for (; x < simd_end; ++x) {
-                    process_scalar(x, y);
-                }
-                
-                process_scalar(w - 1, y);
             }
         }
     });
@@ -834,36 +850,52 @@ void FluidEngine::collideAndStream() {
         std::fill(curl.begin(), curl.end(), 0.0f);
 
         parallel_for(1, h - 1, [&](int startY, int endY) {
-            for (int y = startY; y < endY; ++y) {
-                for (int x = 1; x < w - 1; ++x) {
-                    int idx = y * w + x;
-                    if (barriers[idx]) continue;
-                    curl[idx] = uy[idx + 1] - uy[idx - 1] - (ux[idx + w] - ux[idx - w]);
+            const int BLOCK_SIZE = 32;
+            for (int by = startY; by < endY; by += BLOCK_SIZE) {
+                int maxY = std::min(by + BLOCK_SIZE, endY);
+                for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
+                    int maxX = std::min(bx + BLOCK_SIZE, w);
+                    
+                    for (int y = by; y < maxY; ++y) {
+                        for (int x = std::max(bx, 1); x < std::min(maxX, w - 1); ++x) {
+                            int idx = y * w + x;
+                            if (barriers[idx]) continue;
+                            curl[idx] = uy[idx + 1] - uy[idx - 1] - (ux[idx + w] - ux[idx - w]);
+                        }
+                    }
                 }
             }
         });
         
         parallel_for(1, h - 1, [&](int startY, int endY) {
-            for (int y = startY; y < endY; ++y) {
-                for (int x = 1; x < w - 1; ++x) {
-                    int idx = y * w + x;
-                    if (barriers[idx]) {
-                        forceX[idx] = 0.0f;
-                        forceY[idx] = 0.0f;
-                        continue;
-                    }
-                    
-                    float dc_dx = (std::abs(curl[idx + 1]) - std::abs(curl[idx - 1])) * 0.5f;
-                    float dc_dy = (std::abs(curl[idx + w]) - std::abs(curl[idx - w])) * 0.5f;
-                    float mag_grad = std::sqrt(dc_dx * dc_dx + dc_dy * dc_dy);
-                    
-                    if (mag_grad > 1e-6f) {
-                        float scale = vorticityConfinement / mag_grad;
-                        forceX[idx] = scale * dc_dy * curl[idx];
-                        forceY[idx] = scale * -dc_dx * curl[idx];
-                    } else {
-                        forceX[idx] = 0.0f;
-                        forceY[idx] = 0.0f;
+            const int BLOCK_SIZE = 32;
+            for (int by = startY; by < endY; by += BLOCK_SIZE) {
+                int maxY = std::min(by + BLOCK_SIZE, endY);
+                for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
+                    int maxX = std::min(bx + BLOCK_SIZE, w);
+
+                    for (int y = by; y < maxY; ++y) {
+                        for (int x = std::max(bx, 1); x < std::min(maxX, w - 1); ++x) {
+                            int idx = y * w + x;
+                            if (barriers[idx]) {
+                                forceX[idx] = 0.0f;
+                                forceY[idx] = 0.0f;
+                                continue;
+                            }
+                            
+                            float dc_dx = (std::abs(curl[idx + 1]) - std::abs(curl[idx - 1])) * 0.5f;
+                            float dc_dy = (std::abs(curl[idx + w]) - std::abs(curl[idx - w])) * 0.5f;
+                            float mag_grad = std::sqrt(dc_dx * dc_dx + dc_dy * dc_dy);
+                            
+                            if (mag_grad > 1e-6f) {
+                                float scale = vorticityConfinement / mag_grad;
+                                forceX[idx] = scale * dc_dy * curl[idx];
+                                forceY[idx] = scale * -dc_dx * curl[idx];
+                            } else {
+                                forceX[idx] = 0.0f;
+                                forceY[idx] = 0.0f;
+                            }
+                        }
                     }
                 }
             }
@@ -876,43 +908,51 @@ void FluidEngine::collideAndStream() {
 
 void FluidEngine::advectDye() {
     parallel_for(0, h, [&](int startY, int endY) {
-        for (int y = startY; y < endY; ++y) {
-            for (int x = 0; x < w; ++x) {
-                int idx = y * w + x;
-                if (barriers[idx]) {
-                    dye_new[idx] = 0.0f;
-                    continue;
+        const int BLOCK_SIZE = 32;
+        for (int by = startY; by < endY; by += BLOCK_SIZE) {
+            int maxY = std::min(by + BLOCK_SIZE, endY);
+            for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
+                int maxX = std::min(bx + BLOCK_SIZE, w);
+                
+                for (int y = by; y < maxY; ++y) {
+                    for (int x = bx; x < maxX; ++x) {
+                        int idx = y * w + x;
+                        if (barriers[idx]) {
+                            dye_new[idx] = 0.0f;
+                            continue;
+                        }
+
+                        float x_prev = (float)x - ux[idx] * dt;
+                        float y_prev = (float)y - uy[idx] * dt;
+
+                        if (x_prev < 0.5f) x_prev = 0.5f;
+                        if (x_prev > w - 1.5f) x_prev = w - 1.5f;
+                        if (y_prev < 0.5f) y_prev = 0.5f;
+                        if (y_prev > h - 1.5f) y_prev = h - 1.5f;
+
+                        int ix = static_cast<int>(x_prev);
+                        int iy = static_cast<int>(y_prev);
+                        float fx = x_prev - ix;
+                        float fy = y_prev - iy;
+
+                        int idx_tl = iy * w + ix;
+                        int idx_tr = idx_tl + 1;
+                        int idx_bl = (iy + 1) * w + ix;
+                        int idx_br = idx_bl + 1;
+
+                        float d_tl = barriers[idx_tl] ? 0.0f : dye[idx_tl];
+                        float d_tr = barriers[idx_tr] ? 0.0f : dye[idx_tr];
+                        float d_bl = barriers[idx_bl] ? 0.0f : dye[idx_bl];
+                        float d_br = barriers[idx_br] ? 0.0f : dye[idx_br];
+                        
+                        float interpolated_dye = (1.0f - fx) * (1.0f - fy) * d_tl +
+                                                 fx * (1.0f - fy) * d_tr +
+                                                 (1.0f - fx) * fy * d_bl +
+                                                 fx * fy * d_br;
+                        
+                        dye_new[idx] = interpolated_dye * (1.0f - decay);
+                    }
                 }
-
-                float x_prev = (float)x - ux[idx] * dt;
-                float y_prev = (float)y - uy[idx] * dt;
-
-                if (x_prev < 0.5f) x_prev = 0.5f;
-                if (x_prev > w - 1.5f) x_prev = w - 1.5f;
-                if (y_prev < 0.5f) y_prev = 0.5f;
-                if (y_prev > h - 1.5f) y_prev = h - 1.5f;
-
-                int ix = static_cast<int>(x_prev);
-                int iy = static_cast<int>(y_prev);
-                float fx = x_prev - ix;
-                float fy = y_prev - iy;
-
-                int idx_tl = iy * w + ix;
-                int idx_tr = idx_tl + 1;
-                int idx_bl = (iy + 1) * w + ix;
-                int idx_br = idx_bl + 1;
-
-                float d_tl = barriers[idx_tl] ? 0.0f : dye[idx_tl];
-                float d_tr = barriers[idx_tr] ? 0.0f : dye[idx_tr];
-                float d_bl = barriers[idx_bl] ? 0.0f : dye[idx_bl];
-                float d_br = barriers[idx_br] ? 0.0f : dye[idx_br];
-                
-                float interpolated_dye = (1.0f - fx) * (1.0f - fy) * d_tl +
-                                         fx * (1.0f - fy) * d_tr +
-                                         (1.0f - fx) * fy * d_bl +
-                                         fx * fy * d_br;
-                
-                dye_new[idx] = interpolated_dye * (1.0f - decay);
             }
         }
     });
@@ -925,43 +965,51 @@ val FluidEngine::getDyeView() {
 
 void FluidEngine::advectTemperature() {
     parallel_for(0, h, [&](int startY, int endY) {
-        for (int y = startY; y < endY; ++y) {
-            for (int x = 0; x < w; ++x) {
-                int idx = y * w + x;
-                if (barriers[idx]) {
-                    temperature_new[idx] = 0.0f;
-                    continue;
+        const int BLOCK_SIZE = 32;
+        for (int by = startY; by < endY; by += BLOCK_SIZE) {
+            int maxY = std::min(by + BLOCK_SIZE, endY);
+            for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
+                int maxX = std::min(bx + BLOCK_SIZE, w);
+                
+                for (int y = by; y < maxY; ++y) {
+                    for (int x = bx; x < maxX; ++x) {
+                        int idx = y * w + x;
+                        if (barriers[idx]) {
+                            temperature_new[idx] = 0.0f;
+                            continue;
+                        }
+
+                        float x_prev = (float)x - ux[idx] * dt;
+                        float y_prev = (float)y - uy[idx] * dt;
+
+                        if (x_prev < 0.5f) x_prev = 0.5f;
+                        if (x_prev > w - 1.5f) x_prev = w - 1.5f;
+                        if (y_prev < 0.5f) y_prev = 0.5f;
+                        if (y_prev > h - 1.5f) y_prev = h - 1.5f;
+
+                        int ix = static_cast<int>(x_prev);
+                        int iy = static_cast<int>(y_prev);
+                        float fx = x_prev - ix;
+                        float fy = y_prev - iy;
+
+                        int idx_tl = iy * w + ix;
+                        int idx_tr = idx_tl + 1;
+                        int idx_bl = (iy + 1) * w + ix;
+                        int idx_br = idx_bl + 1;
+
+                        float t_tl = barriers[idx_tl] ? 0.0f : temperature[idx_tl];
+                        float t_tr = barriers[idx_tr] ? 0.0f : temperature[idx_tr];
+                        float t_bl = barriers[idx_bl] ? 0.0f : temperature[idx_bl];
+                        float t_br = barriers[idx_br] ? 0.0f : temperature[idx_br];
+                        
+                        float interpolated_temp = (1.0f - fx) * (1.0f - fy) * t_tl +
+                                                 fx * (1.0f - fy) * t_tr +
+                                                 (1.0f - fx) * fy * t_bl +
+                                                 fx * fy * t_br;
+                        
+                        temperature_new[idx] = interpolated_temp * (1.0f - thermalDiffusivity);
+                    }
                 }
-
-                float x_prev = (float)x - ux[idx] * dt;
-                float y_prev = (float)y - uy[idx] * dt;
-
-                if (x_prev < 0.5f) x_prev = 0.5f;
-                if (x_prev > w - 1.5f) x_prev = w - 1.5f;
-                if (y_prev < 0.5f) y_prev = 0.5f;
-                if (y_prev > h - 1.5f) y_prev = h - 1.5f;
-
-                int ix = static_cast<int>(x_prev);
-                int iy = static_cast<int>(y_prev);
-                float fx = x_prev - ix;
-                float fy = y_prev - iy;
-
-                int idx_tl = iy * w + ix;
-                int idx_tr = idx_tl + 1;
-                int idx_bl = (iy + 1) * w + ix;
-                int idx_br = idx_bl + 1;
-
-                float t_tl = barriers[idx_tl] ? 0.0f : temperature[idx_tl];
-                float t_tr = barriers[idx_tr] ? 0.0f : temperature[idx_tr];
-                float t_bl = barriers[idx_bl] ? 0.0f : temperature[idx_bl];
-                float t_br = barriers[idx_br] ? 0.0f : temperature[idx_br];
-                
-                float interpolated_temp = (1.0f - fx) * (1.0f - fy) * t_tl +
-                                         fx * (1.0f - fy) * t_tr +
-                                         (1.0f - fx) * fy * t_bl +
-                                         fx * fy * t_br;
-                
-                temperature_new[idx] = interpolated_temp * (1.0f - thermalDiffusivity);
             }
         }
     });

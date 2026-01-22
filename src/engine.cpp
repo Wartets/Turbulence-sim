@@ -62,6 +62,7 @@ FluidEngine::FluidEngine(int width, int height)
     , work_generation(0)
     , barriersDirty(true)
     , dataVersion(1)
+    , useBFECC(false)
 {
     std::cout << "DEBUG: FluidEngine Created (w="
               << width << ", h=" << height
@@ -84,6 +85,8 @@ FluidEngine::FluidEngine(int width, int height)
     temperature.resize(size, 0.0f);
     temperature_new.resize(size, 0.0f);
     porosity.resize(size, 1.0f);
+    tmp_bfecc1.resize(size, 0.0f);
+    tmp_bfecc2.resize(size, 0.0f);
 
     forceX.resize(size, 0.0f);
     forceY.resize(size, 0.0f);
@@ -95,6 +98,62 @@ FluidEngine::FluidEngine(int width, int height)
     for (int k = 0; k < 9; ++k) {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
+}
+
+void FluidEngine::setBFECC(bool enable) {
+    useBFECC = enable;
+}
+
+void FluidEngine::performAdvection(const std::vector<float>& src, std::vector<float>& dst, float dt_scale, float decay_rate) {
+    parallel_for(0, h, [&](int startY, int endY) {
+        const int BLOCK_SIZE = 32;
+        for (int by = startY; by < endY; by += BLOCK_SIZE) {
+            int maxY = std::min(by + BLOCK_SIZE, endY);
+            for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
+                int maxX = std::min(bx + BLOCK_SIZE, w);
+                
+                for (int y = by; y < maxY; ++y) {
+                    for (int x = bx; x < maxX; ++x) {
+                        int idx = y * w + x;
+                        if (barriers[idx]) {
+                            dst[idx] = 0.0f;
+                            continue;
+                        }
+
+                        float x_prev = (float)x - ux[idx] * dt_scale;
+                        float y_prev = (float)y - uy[idx] * dt_scale;
+
+                        if (x_prev < 0.5f) x_prev = 0.5f;
+                        if (x_prev > w - 1.5f) x_prev = w - 1.5f;
+                        if (y_prev < 0.5f) y_prev = 0.5f;
+                        if (y_prev > h - 1.5f) y_prev = h - 1.5f;
+
+                        int ix = static_cast<int>(x_prev);
+                        int iy = static_cast<int>(y_prev);
+                        float fx = x_prev - ix;
+                        float fy = y_prev - iy;
+
+                        int idx_tl = iy * w + ix;
+                        int idx_tr = idx_tl + 1;
+                        int idx_bl = (iy + 1) * w + ix;
+                        int idx_br = idx_bl + 1;
+
+                        float d_tl = barriers[idx_tl] ? 0.0f : src[idx_tl];
+                        float d_tr = barriers[idx_tr] ? 0.0f : src[idx_tr];
+                        float d_bl = barriers[idx_bl] ? 0.0f : src[idx_bl];
+                        float d_br = barriers[idx_br] ? 0.0f : src[idx_br];
+                        
+                        float interpolated = (1.0f - fx) * (1.0f - fy) * d_tl +
+                                             fx * (1.0f - fy) * d_tr +
+                                             (1.0f - fx) * fy * d_bl +
+                                             fx * fy * d_br;
+                        
+                        dst[idx] = interpolated * (1.0f - decay_rate);
+                    }
+                }
+            }
+        }
+    });
 }
 
 void FluidEngine::setBoundaryConditions(int left, int right, int top, int bottom) {
@@ -972,113 +1031,55 @@ void FluidEngine::collideAndStream() {
     }
 }
 
-void FluidEngine::advectDye() {
-    parallel_for(0, h, [&](int startY, int endY) {
-        const int BLOCK_SIZE = 32;
-        for (int by = startY; by < endY; by += BLOCK_SIZE) {
-            int maxY = std::min(by + BLOCK_SIZE, endY);
-            for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
-                int maxX = std::min(bx + BLOCK_SIZE, w);
-                
-                for (int y = by; y < maxY; ++y) {
-                    for (int x = bx; x < maxX; ++x) {
-                        int idx = y * w + x;
-                        if (barriers[idx]) {
-                            dye_new[idx] = 0.0f;
-                            continue;
-                        }
-
-                        float x_prev = (float)x - ux[idx] * dt;
-                        float y_prev = (float)y - uy[idx] * dt;
-
-                        if (x_prev < 0.5f) x_prev = 0.5f;
-                        if (x_prev > w - 1.5f) x_prev = w - 1.5f;
-                        if (y_prev < 0.5f) y_prev = 0.5f;
-                        if (y_prev > h - 1.5f) y_prev = h - 1.5f;
-
-                        int ix = static_cast<int>(x_prev);
-                        int iy = static_cast<int>(y_prev);
-                        float fx = x_prev - ix;
-                        float fy = y_prev - iy;
-
-                        int idx_tl = iy * w + ix;
-                        int idx_tr = idx_tl + 1;
-                        int idx_bl = (iy + 1) * w + ix;
-                        int idx_br = idx_bl + 1;
-
-                        float d_tl = barriers[idx_tl] ? 0.0f : dye[idx_tl];
-                        float d_tr = barriers[idx_tr] ? 0.0f : dye[idx_tr];
-                        float d_bl = barriers[idx_bl] ? 0.0f : dye[idx_bl];
-                        float d_br = barriers[idx_br] ? 0.0f : dye[idx_br];
-                        
-                        float interpolated_dye = (1.0f - fx) * (1.0f - fy) * d_tl +
-                                                 fx * (1.0f - fy) * d_tr +
-                                                 (1.0f - fx) * fy * d_bl +
-                                                 fx * fy * d_br;
-                        
-                        dye_new[idx] = interpolated_dye * (1.0f - decay);
-                    }
-                }
-            }
-        }
-    });
-    dye.swap(dye_new);
-}
-
 val FluidEngine::getDyeView() {
     return val(typed_memory_view(w * h, dye.data()));
 }
 
-void FluidEngine::advectTemperature() {
-    parallel_for(0, h, [&](int startY, int endY) {
-        const int BLOCK_SIZE = 32;
-        for (int by = startY; by < endY; by += BLOCK_SIZE) {
-            int maxY = std::min(by + BLOCK_SIZE, endY);
-            for (int bx = 0; bx < w; bx += BLOCK_SIZE) {
-                int maxX = std::min(bx + BLOCK_SIZE, w);
-                
-                for (int y = by; y < maxY; ++y) {
-                    for (int x = bx; x < maxX; ++x) {
-                        int idx = y * w + x;
-                        if (barriers[idx]) {
-                            temperature_new[idx] = 0.0f;
-                            continue;
-                        }
+void FluidEngine::advectDye() {
+    if (!useBFECC) {
+        performAdvection(dye, dye_new, dt, decay);
+    } else {
+        performAdvection(dye, tmp_bfecc1, dt, 0.0f);
+        performAdvection(tmp_bfecc1, tmp_bfecc2, -dt, 0.0f);
 
-                        float x_prev = (float)x - ux[idx] * dt;
-                        float y_prev = (float)y - uy[idx] * dt;
-
-                        if (x_prev < 0.5f) x_prev = 0.5f;
-                        if (x_prev > w - 1.5f) x_prev = w - 1.5f;
-                        if (y_prev < 0.5f) y_prev = 0.5f;
-                        if (y_prev > h - 1.5f) y_prev = h - 1.5f;
-
-                        int ix = static_cast<int>(x_prev);
-                        int iy = static_cast<int>(y_prev);
-                        float fx = x_prev - ix;
-                        float fy = y_prev - iy;
-
-                        int idx_tl = iy * w + ix;
-                        int idx_tr = idx_tl + 1;
-                        int idx_bl = (iy + 1) * w + ix;
-                        int idx_br = idx_bl + 1;
-
-                        float t_tl = barriers[idx_tl] ? 0.0f : temperature[idx_tl];
-                        float t_tr = barriers[idx_tr] ? 0.0f : temperature[idx_tr];
-                        float t_bl = barriers[idx_bl] ? 0.0f : temperature[idx_bl];
-                        float t_br = barriers[idx_br] ? 0.0f : temperature[idx_br];
-                        
-                        float interpolated_temp = (1.0f - fx) * (1.0f - fy) * t_tl +
-                                                 fx * (1.0f - fy) * t_tr +
-                                                 (1.0f - fx) * fy * t_bl +
-                                                 fx * fy * t_br;
-                        
-                        temperature_new[idx] = interpolated_temp * (1.0f - thermalDiffusivity);
+        parallel_for(0, h, [&](int startY, int endY) {
+            for (int y = startY; y < endY; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    int idx = y * w + x;
+                    if (!barriers[idx]) {
+                        float v = 1.5f * dye[idx] - 0.5f * tmp_bfecc2[idx];
+                        if (v < 0.0f) v = 0.0f;
+                        tmp_bfecc1[idx] = v;
                     }
                 }
             }
-        }
-    });
+        });
+
+        performAdvection(tmp_bfecc1, dye_new, dt, decay);
+    }
+    dye.swap(dye_new);
+}
+
+void FluidEngine::advectTemperature() {
+    if (!useBFECC) {
+        performAdvection(temperature, temperature_new, dt, thermalDiffusivity);
+    } else {
+        performAdvection(temperature, tmp_bfecc1, dt, 0.0f);
+        performAdvection(tmp_bfecc1, tmp_bfecc2, -dt, 0.0f);
+
+        parallel_for(0, h, [&](int startY, int endY) {
+            for (int y = startY; y < endY; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    int idx = y * w + x;
+                    if (!barriers[idx]) {
+                        tmp_bfecc1[idx] = 1.5f * temperature[idx] - 0.5f * tmp_bfecc2[idx];
+                    }
+                }
+            }
+        });
+
+        performAdvection(tmp_bfecc1, temperature_new, dt, thermalDiffusivity);
+    }
     temperature.swap(temperature_new);
 }
 
@@ -1129,6 +1130,7 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("setPorosityDrag", &FluidEngine::setPorosityDrag)
         .function("setSpongeProperties", &FluidEngine::setSpongeProperties)
         .function("setSpongeBoundaries", &FluidEngine::setSpongeBoundaries)
+        .function("setBFECC", &FluidEngine::setBFECC)
         .function("reset", &FluidEngine::reset)
         .function("clearRegion", &FluidEngine::clearRegion)
         .function("addObstacle", emscripten::select_overload<void(int, int, int, bool, float, float, int)>(&FluidEngine::addObstacle))

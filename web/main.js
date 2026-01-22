@@ -18,7 +18,7 @@ createFluidEngine().then(Module => {
             resolutionScale: 300,
             iterations: 2,
             paused: false,
-            dt: 0.95,
+            dt: 0.1,
             threads: navigator.hardwareConcurrency || 4
         },
 
@@ -60,6 +60,7 @@ createFluidEngine().then(Module => {
             enableSmagorinsky: true,
             enableTempViscosity: false,
             enableNonNewtonian: false,
+            enableBFECC: true,
             spongeLeft: false,
             spongeRight: false,
             spongeTop: false,
@@ -213,6 +214,11 @@ createFluidEngine().then(Module => {
         else engine.setMovingWallVelocity(side === 'Left' ? 0 : 1, 0, value);
     };
 
+    const updateBFECC = () => {
+        if (!engine) return;
+        engine.setBFECC(params.features.enableBFECC);
+    };
+
     const gui = new lil.GUI({ title: 'Turbulence Simulation' });
 
     const findController = (root, obj, property) => {
@@ -268,7 +274,7 @@ createFluidEngine().then(Module => {
     const simFolder = gui.addFolder('Simulation').close();
     simFolder.add(params.simulation, 'resolutionScale', [50, 100, 200, 300, 400, 600, 800, 1000]).name('Grid Resolution').onChange(initSimulation);
     simFolder.add(params.simulation, 'iterations', 0, 20, 1).name('Iterations/Frame');
-    simFolder.add(params.simulation, 'dt', 0.01, 2.0).name('Time Step (dt)').step(0.01).onChange(t => engine && engine.setDt(t));
+    simFolder.add(params.simulation, 'dt', 0.001, 1.5, 0.001).name('Time Step (dt)').step(0.01).onChange(t => engine && engine.setDt(t));
     simFolder.add(params.simulation, 'threads', 1, 32, 1).name('CPU Threads').onChange(t => {
         if (engine && typeof engine.setThreadCount === 'function') {
             engine.setThreadCount(t);
@@ -321,7 +327,8 @@ createFluidEngine().then(Module => {
 
     const advancedPhysicsFolder = physicsFolder.addFolder('Advanced').close();
     advancedPhysicsFolder.add(params.physics, 'maxVelocity', 0.01, 1.0).name('Max Velocity (Stability)').step(0.01).onChange(v => engine && engine.setMaxVelocity(v));
-
+    advancedPhysicsFolder.add(params.features, 'enableBFECC').name('Enable BFECC').onChange(updateBFECC);
+    
     const turbulenceFolder = physicsFolder.addFolder('Turbulence (LES)').close();
     const smagController = turbulenceFolder.add(params.physics, 'smagorinsky', 0.0, 0.3).name('Smagorinsky Const').step(0.01).onChange(updateSmagorinsky);
     turbulenceFolder.add(params.features, 'enableSmagorinsky').name('Enable LES').onChange(enabled => {
@@ -534,6 +541,7 @@ createFluidEngine().then(Module => {
         updateRheology();
         updateSmagorinsky();
         updateTempViscosity();
+        updateBFECC();
         
         renderer = new Renderer(canvas, simWidth, simHeight);
         renderer.initParticles(params.particles.count);

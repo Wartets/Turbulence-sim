@@ -40,6 +40,7 @@ public:
     void setSpongeBoundaries(bool left, bool right, bool top, bool bottom);
 
     void setThreadCount(int count);
+    void setBFECC(bool enable);
     
     unsigned int getDataVersion();
 
@@ -94,6 +95,7 @@ private:
     bool spongeLeft, spongeRight, spongeTop, spongeBottom;
     
     int threadCount;
+    bool useBFECC;
     
     std::atomic<unsigned int> dataVersion;
 
@@ -108,6 +110,9 @@ private:
     std::vector<float> temperature;
     std::vector<float> temperature_new;
     std::vector<float> porosity;
+
+    std::vector<float> tmp_bfecc1;
+    std::vector<float> tmp_bfecc2;
     
     std::vector<float> forceX;
     std::vector<float> forceY;
@@ -136,6 +141,7 @@ private:
     void limitVelocity(float &u, float &v);
     void applyMacroscopicBoundaries();
     void applyPostStreamBoundaries();
+    void performAdvection(const std::vector<float>& src, std::vector<float>& dst, float dt_scale, float decay_rate);
     
     void parallel_for(int start, int end, std::function<void(int, int)> func);
 };

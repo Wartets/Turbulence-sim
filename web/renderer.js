@@ -255,6 +255,17 @@ class Renderer {
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
             this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.uy);
         }
+        // Need density texture for Pressure visualization
+        const texDensity = this.createTexture(this.gl.R32F, this.gl.RED, this.gl.FLOAT, this.width, this.height);
+        if (vizParams.mode === 4 || vizParams.mode === 2) { 
+             const densityView = views.density || views.dye; 
+             if (views.density) { 
+                 this.gl.activeTexture(this.gl.TEXTURE2);
+                 this.gl.bindTexture(this.gl.TEXTURE_2D, texDensity);
+                 this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, this.width, this.height, this.gl.RED, this.gl.FLOAT, views.density);
+             }
+        }
+
         if (views.dye) {
             this.gl.activeTexture(this.gl.TEXTURE3);
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.texDye);
@@ -278,6 +289,10 @@ class Renderer {
         this.gl.activeTexture(this.gl.TEXTURE1);
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.texUy);
         this.gl.uniform1i(this.uniforms.uy, 1);
+        
+        this.gl.activeTexture(this.gl.TEXTURE2);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, texDensity); 
+        this.gl.uniform1i(this.gl.getUniformLocation(this.program, "u_rho"), 2);
 
         this.gl.activeTexture(this.gl.TEXTURE3);
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.texDye);
@@ -313,6 +328,8 @@ class Renderer {
         this.gl.uniform1i(this.uniforms.vorticityBipolar, vizParams.vorticityBipolar);
 
         this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+        
+        this.gl.deleteTexture(texDensity);
 
         if (vizParams.particles && vizParams.particles.show) {
             this.drawParticles(vizParams); 

@@ -251,12 +251,33 @@ void main() {
         
         color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
     }
+    else if (u_mode == 4) {
+        // Pressure (Scalar field of density deviation)
+        float u_ux_val = texture(u_ux, v_uv).r;
+        float u_uy_val = texture(u_uy, v_uv).r;
+        
+        float v_sq = u_ux_val*u_ux_val + u_uy_val*u_uy_val;
+        
+        float feq0 = 4.0/9.0 * 1.0 * (1.0 - 1.5 * v_sq);
+        float f0 = texture(u_rho, v_uv).r; 
+        
+        float pressure = f0; 
+        float deviation = (pressure - 1.0) * 8.0; 
+        
+        float raw = deviation - u_bias;
+        float scaled = raw * u_contrast;
+        float signedPow = sign(scaled) * pow(abs(scaled), u_power);
+        val = signedPow * 0.5 + 0.5;
+        
+        activity = abs(val - 0.5) * 2.0;
+        color = getPalette(clamp(val, 0.0, 1.0), u_color_scheme);
+    }
 
     vec3 fluid_color = color * u_brightness;
     float intensity = clamp(activity * 5.0, 0.0, 1.0);
     vec3 final_color = mix(u_background_color, fluid_color, intensity);
     
-    if (u_mode == 1 || (u_mode == 0 && u_vorticity_bipolar) || (u_mode == 3 && u_vorticity_bipolar)) {
+    if (u_mode == 1 || (u_mode == 0 && u_vorticity_bipolar) || (u_mode == 3 && u_vorticity_bipolar) || u_mode == 4) {
          final_color = mix(u_background_color, fluid_color, clamp(u_brightness, 0.0, 1.0));
     }
 

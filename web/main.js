@@ -29,6 +29,8 @@ createFluidEngine().then(Module => {
             maxVelocity: 0.57,
             smagorinsky: 0.05,
             tempViscosity: 0.0,
+            rheologyIndex: 1.0,
+            rheologyConsistency: 0.0,
         },
 
         features: {
@@ -37,6 +39,7 @@ createFluidEngine().then(Module => {
             enableVorticity: true,
             enableSmagorinsky: true,
             enableTempViscosity: false,
+            enableNonNewtonian: false,
         },
         
         visualization: {
@@ -120,6 +123,16 @@ createFluidEngine().then(Module => {
         engine.setTemperatureViscosity(params.features.enableTempViscosity ? params.physics.tempViscosity : 0.0);
     };
 
+    const updateRheology = () => {
+        if (!engine) return;
+        if (params.features.enableNonNewtonian) {
+            engine.setFlowBehaviorIndex(params.physics.rheologyIndex);
+            engine.setConsistencyIndex(params.physics.rheologyConsistency);
+        } else {
+            engine.setConsistencyIndex(0.0);
+        }
+    };
+
     const gui = new lil.GUI({ title: 'Turbulence Simulation' });
     
     const simFolder = gui.addFolder('Simulation').close();
@@ -190,8 +203,13 @@ createFluidEngine().then(Module => {
         updateBuoyancy();
     });
 
+    const rheologyFolder = physicsFolder.addFolder('Rheology (Non-Newtonian)').close();
+    rheologyFolder.add(params.features, 'enableNonNewtonian').name('Enable').onChange(updateRheology);
+    rheologyFolder.add(params.physics, 'rheologyIndex', 0.1, 2.0).name('Flow Index (n)').step(0.01).onChange(updateRheology);
+    rheologyFolder.add(params.physics, 'rheologyConsistency', 0.0, 5.0).name('Consistency (k)').step(0.01).onChange(updateRheology);
+
     const viewFolder = gui.addFolder('Visualization');
-    viewFolder.add(params.visualization, 'mode', { 'Vorticity': 0, 'Velocity': 1, 'Density': 2, 'Temperature': 3 }).name('Field');
+    viewFolder.add(params.visualization, 'mode', { 'Vorticity': 0, 'Velocity': 1, 'Density': 2, 'Temperature': 3, 'Pressure': 4 }).name('Field');
     viewFolder.add(params.visualization, 'colorScheme', { 
         'Inferno': 0, 'Magma': 1, 'Plasma': 2, 'Viridis': 3,
         'Turbo': 4, 'Grayscale': 5, 'Ice': 6, 'Cividis': 7, 'Coolwarm': 8
@@ -498,7 +516,7 @@ createFluidEngine().then(Module => {
         const vizMode = params.visualization.mode;
         const particlesOn = params.particles.show;
 
-        if (vizMode === 0 || vizMode === 1 || particlesOn) {
+        if (vizMode === 0 || vizMode === 1 || vizMode === 4 || particlesOn) {
             views.ux = engine.getVelocityXView();
             views.uy = engine.getVelocityYView();
         }
@@ -507,6 +525,9 @@ createFluidEngine().then(Module => {
         }
         if (vizMode === 3) {
             views.temp = engine.getTemperatureView();
+        }
+        if (vizMode === 4) { 
+            views.density = engine.getDensityView();
         }
         
         const obsDirty = engine.checkBarrierDirty();

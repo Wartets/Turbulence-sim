@@ -16,7 +16,7 @@ const int cy[9] = {0, 0, 1, 0, -1, 1, 1, -1, -1};
 const int opp[9] = {0, 3, 4, 1, 2, 7, 8, 5, 6};
 const float weights[9] = {4.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/9.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f, 1.0f/36.0f};
 
-FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), smagorinskyConstant(0.0f), temperatureViscosity(0.0f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0), barriersDirty(true) {
+FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.85f), decay(0.0f), velocityDissipation(0.0f), dt(1.0f), boundaryType(0), gravityX(0.0f), gravityY(0.0f), buoyancy(0.0f), thermalDiffusivity(0.0f), vorticityConfinement(0.0f), maxVelocity(0.57f), smagorinskyConstant(0.0f), temperatureViscosity(0.0f), flowBehaviorIndex(1.0f), consistencyIndex(0.0f), threadCount(1), stop_pool(false), pending_workers(0), work_generation(0), barriersDirty(true) {
     std::cout << "DEBUG: FluidEngine Created (w=" << width << ", h=" << height << "). Threading support initialized." << std::endl;
     int size = w * h;
     for(int k = 0; k < 9; ++k) {
@@ -41,6 +41,14 @@ FluidEngine::FluidEngine(int width, int height) : w(width), h(height), omega(1.8
     for (int k = 0; k < 9; ++k) {
         std::fill(f[k].begin(), f[k].end(), feq[k]);
     }
+}
+
+void FluidEngine::setFlowBehaviorIndex(float n) {
+    flowBehaviorIndex = n;
+}
+
+void FluidEngine::setConsistencyIndex(float k) {
+    consistencyIndex = k;
 }
 
 void FluidEngine::setSmagorinskyConstant(float c) {
@@ -530,6 +538,9 @@ void FluidEngine::collideAndStream() {
         v128_t v_tempVisc = wasm_f32x4_splat(temperatureViscosity);
         bool useSmagorinsky = (smagorinskyConstant > 0.0f);
         bool useTempVisc = (temperatureViscosity > 0.0f);
+        bool useNonNewtonian = (consistencyIndex > 0.0f);
+        float n_idx_val = flowBehaviorIndex;
+        float k_idx_val = consistencyIndex;
 
         float feq_rest[9];
         equilibrium(1.0f, 0.0f, 0.0f, feq_rest);
@@ -573,7 +584,7 @@ void FluidEngine::collideAndStream() {
 
             float local_omega = omega;
             
-            if (useTempVisc || useSmagorinsky) {
+            if (useTempVisc || useSmagorinsky || useNonNewtonian) {
                 float current_tau = 1.0f / omega;
                 float nu = (current_tau - 0.5f) / 3.0f;
 
@@ -581,8 +592,9 @@ void FluidEngine::collideAndStream() {
                     float T = temperature[idx];
                     nu = nu * (1.0f / (1.0f + temperatureViscosity * T));
                 }
-
-                if (useSmagorinsky) {
+                
+                float magS = 0.0f;
+                if (useSmagorinsky || useNonNewtonian) {
                     float Qxx = 0.0f, Qxy = 0.0f, Qyy = 0.0f;
                     for(int k=0; k<9; ++k) {
                         float f_neq = f[k][idx] - feq[k];
@@ -590,7 +602,16 @@ void FluidEngine::collideAndStream() {
                         Qxy += cx[k] * cy[k] * f_neq;
                         Qyy += cy[k] * cy[k] * f_neq;
                     }
-                    float magS = std::sqrt(Qxx*Qxx + 2.0f*Qxy*Qxy + Qyy*Qyy);
+                    magS = std::sqrt(Qxx*Qxx + 2.0f*Qxy*Qxy + Qyy*Qyy);
+                }
+
+                if (useNonNewtonian) {
+                    float strainMag = magS * 1.5f * omega; 
+                    float viscosityFactor = 1.0f + k_idx_val * std::pow(strainMag, n_idx_val - 1.0f);
+                    nu *= viscosityFactor;
+                }
+
+                if (useSmagorinsky) {
                     float eddy_nu = (smagorinskyConstant * smagorinskyConstant) * magS;
                     nu += eddy_nu;
                 }
@@ -714,7 +735,7 @@ void FluidEngine::collideAndStream() {
 
                     v128_t v_omega_local = v_base_omega;
                     
-                    if (useSmagorinsky || useTempVisc) {
+                    if (useSmagorinsky || useTempVisc || useNonNewtonian) {
                          v128_t v_tau = wasm_f32x4_div(v_one, v_base_omega);
                          v128_t v_nu = wasm_f32x4_div(wasm_f32x4_sub(v_tau, v_point_five), v_three);
                          
@@ -723,7 +744,7 @@ void FluidEngine::collideAndStream() {
                              v_nu = wasm_f32x4_div(v_nu, v_t_factor);
                          }
 
-                         if (useSmagorinsky) {
+                         if (useSmagorinsky || useNonNewtonian) {
                              v128_t v_Qxx = wasm_f32x4_splat(0.0f);
                              v128_t v_Qxy = wasm_f32x4_splat(0.0f);
                              v128_t v_Qyy = wasm_f32x4_splat(0.0f);
@@ -737,8 +758,24 @@ void FluidEngine::collideAndStream() {
                              
                              v128_t v_magS2 = wasm_f32x4_add(wasm_f32x4_mul(v_Qxx, v_Qxx), wasm_f32x4_add(wasm_f32x4_mul(v_two, wasm_f32x4_mul(v_Qxy, v_Qxy)), wasm_f32x4_mul(v_Qyy, v_Qyy)));
                              v128_t v_magS = wasm_f32x4_sqrt(v_magS2);
-                             v128_t v_nu_eddy = wasm_f32x4_mul(wasm_f32x4_mul(v_smag, v_smag), v_magS);
-                             v_nu = wasm_f32x4_add(v_nu, v_nu_eddy);
+
+                             if (useNonNewtonian) {
+                                float temp_magS[4];
+                                float temp_omega[4];
+                                wasm_v128_store(temp_magS, v_magS);
+                                wasm_v128_store(temp_omega, v_base_omega);
+                                float scale_factors[4];
+                                for(int i=0; i<4; i++) {
+                                    float strain = temp_magS[i] * 1.5f * temp_omega[i];
+                                    scale_factors[i] = 1.0f + k_idx_val * std::pow(strain, n_idx_val - 1.0f);
+                                }
+                                v_nu = wasm_f32x4_mul(v_nu, wasm_v128_load(scale_factors));
+                             }
+
+                             if (useSmagorinsky) {
+                                v128_t v_nu_eddy = wasm_f32x4_mul(wasm_f32x4_mul(v_smag, v_smag), v_magS);
+                                v_nu = wasm_f32x4_add(v_nu, v_nu_eddy);
+                             }
                          }
 
                          v128_t v_tau_eff = wasm_f32x4_add(wasm_f32x4_mul(v_three, v_nu), v_point_five);
@@ -960,6 +997,8 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("addDensity", &FluidEngine::addDensity)
         .function("addTemperature", &FluidEngine::addTemperature)
         .function("setViscosity", &FluidEngine::setViscosity)
+        .function("setFlowBehaviorIndex", &FluidEngine::setFlowBehaviorIndex)
+        .function("setConsistencyIndex", &FluidEngine::setConsistencyIndex)
         .function("setDecay", &FluidEngine::setDecay)
         .function("setVelocityDissipation", &FluidEngine::setVelocityDissipation)
         .function("setDt", &FluidEngine::setDt)

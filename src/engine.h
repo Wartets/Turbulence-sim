@@ -30,6 +30,9 @@ public:
     void setSmagorinskyConstant(float c);
     void setTemperatureViscosity(float v);
     
+    void setFlowBehaviorIndex(float n);
+    void setConsistencyIndex(float k);
+
     void setThreadCount(int count);
 
     emscripten::val getDensityView();
@@ -65,6 +68,8 @@ private:
     
     float smagorinskyConstant;
     float temperatureViscosity;
+    float flowBehaviorIndex;
+    float consistencyIndex;
     
     int threadCount;
     

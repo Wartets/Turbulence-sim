@@ -6,16 +6,26 @@ TEMP_BUILD_DIR = temp_build
 # Define the compiler and flags
 EMCC = emcc
 EMCC_FLAGS = \
-	-O3 \
+	-O3 -ffast-math \
+	-flto \
 	-std=c++17 \
 	-msimd128 \
+	-mbulk-memory \
+	-fno-rtti \
+	-fno-exceptions \
+	-funroll-loops \
 	-pthread \
+	-DNDEBUG \
+	-DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0 \
 	-s SHARED_MEMORY=1 \
 	-s MODULARIZE=1 \
 	-s EXPORT_NAME="createFluidEngine" \
 	-s PTHREAD_POOL_SIZE=navigator.hardwareConcurrency \
 	-s ALLOW_MEMORY_GROWTH=1 \
 	-s ENVIRONMENT=web,worker \
+	-s DISABLE_EXCEPTION_CATCHING=1 \
+	-s FILESYSTEM=0 \
+	-s ASSERTIONS=0 \
 	--bind \
 	-Wno-pthreads-mem-growth
 

@@ -44,6 +44,8 @@ FluidEngine::FluidEngine(int width, int height)
     , spongeWidth(0)
     , spongeLeft(false), spongeRight(false)
     , spongeTop(false), spongeBottom(false)
+    , surfaceTension(0.0f)
+    , gCohesion(0.0f)
     , threadCount(1), stop_pool(false)
     , pending_workers(0)
     , work_generation(0)
@@ -102,6 +104,56 @@ void FluidEngine::setHandlers() {
     rightHandler = selectHandler(boundaryRight, &FluidEngine::handlerNoSlip, &FluidEngine::handlerSlipV, &FluidEngine::handlerMovingRight);
     bottomHandler = selectHandler(boundaryBottom, &FluidEngine::handlerNoSlip, &FluidEngine::handlerSlipH, &FluidEngine::handlerMovingBottom);
     topHandler = selectHandler(boundaryTop, &FluidEngine::handlerNoSlip, &FluidEngine::handlerSlipH, &FluidEngine::handlerMovingTop);
+}
+
+void FluidEngine::applySurfaceTension() {
+    if (surfaceTension <= 0.0f || gCohesion <= 0.0f) return;
+
+    parallel_for(1, h - 1, [&](int startY, int endY) {
+        const int dx_st[8] = {1, 0, -1, 0, 1, -1, -1, 1};
+        const int dy_st[8] = {0, 1, 0, -1, 1, 1, -1, -1};
+        const float weights_st[8] = {1.0f, 1.0f, 1.0f, 1.0f, 0.7071f, 0.7071f, 0.7071f, 0.7071f};
+        
+        for (int y = startY; y < endY; ++y) {
+            for (int x = 1; x < w - 1; ++x) {
+                int idx = y * w + x;
+                if (barriers[idx]) continue;
+
+                float psi_center = std::exp(-gCohesion / rho[idx]);
+                float fx_st = 0.0f;
+                float fy_st = 0.0f;
+
+                for (int k = 0; k < 8; ++k) {
+                    int nx = x + dx_st[k];
+                    int ny = y + dy_st[k];
+                    
+                    if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+                    
+                    int n_idx = ny * w + nx;
+                    if (barriers[n_idx]) continue;
+
+                    float psi_neighbor = std::exp(-gCohesion / rho[n_idx]);
+                    float force_magnitude = -surfaceTension * psi_center * psi_neighbor * weights_st[k];
+                    
+                    fx_st += force_magnitude * dx_st[k];
+                    fy_st += force_magnitude * dy_st[k];
+                }
+
+                ux[idx] += fx_st * dt;
+                uy[idx] += fy_st * dt;
+                
+                limitVelocity(ux[idx], uy[idx]);
+            }
+        }
+    });
+}
+
+void FluidEngine::setSurfaceTension(float st) {
+    surfaceTension = st;
+}
+
+void FluidEngine::setGCohesion(float g) {
+    gCohesion = g;
 }
 
 void FluidEngine::handlerNoSlip(int& dest_k, float& f_bounce, int k, int idx) const {}
@@ -822,6 +874,7 @@ void FluidEngine::clearRegion(int x, int y, int radius) {
 void FluidEngine::step(int iterations) {
     for(int i=0; i<iterations; ++i) {
         applyMacroscopicBoundaries();
+        applySurfaceTension();
         collideAndStream();
         applyPostStreamBoundaries();
         advectDye();
@@ -1324,6 +1377,8 @@ EMSCRIPTEN_BINDINGS(fluid_module) {
         .function("setPorosityDrag", &FluidEngine::setPorosityDrag)
         .function("setSpongeProperties", &FluidEngine::setSpongeProperties)
         .function("setSpongeBoundaries", &FluidEngine::setSpongeBoundaries)
+        .function("setSurfaceTension", &FluidEngine::setSurfaceTension)
+        .function("setGCohesion", &FluidEngine::setGCohesion)
         .function("setBFECC", &FluidEngine::setBFECC)
         .function("reset", &FluidEngine::reset)
         .function("clearRegion", &FluidEngine::clearRegion)

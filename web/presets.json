@@ -6,11 +6,13 @@
             "boundaryLeft": 1, "boundaryRight": 1, "boundaryTop": 1, "boundaryBottom": 1,
             "gravityX": 0, "gravityY": 0, "thermalExpansion": 0.1, "thermalDiffusivity": 0.001,
             "vorticityConfinement": 0.1, "maxVelocity": 0.57, "smagorinsky": 0.05,
-            "tempViscosity": 0.0, "rheologyIndex": 1.0, "rheologyConsistency": 0.0
+            "tempViscosity": 0.0, "rheologyIndex": 1.0, "rheologyConsistency": 0.0,
+            "surfaceTension": 0.0, "gCohesion": 1.0
         },
         "features": {
             "enableGravity": false, "enableBuoyancy": false, "enableVorticity": true,
-            "enableSmagorinsky": true, "enableTempViscosity": false, "enableNonNewtonian": false
+            "enableSmagorinsky": true, "enableTempViscosity": false, "enableNonNewtonian": false,
+            "enableSurfaceTension": false
         },
         "visualization": {
             "mode": 1, "colorScheme": 4, "contrast": 1, "brightness": 1,
@@ -34,11 +36,13 @@
             "boundaryLeft": 1, "boundaryRight": 1, "boundaryTop": 1, "boundaryBottom": 1,
             "gravityX": 0, "gravityY": -0.5, "thermalExpansion": 0.5, "thermalDiffusivity": 0.0001,
             "vorticityConfinement": 0.0, "maxVelocity": 0.57, "smagorinsky": 0.01,
-            "tempViscosity": 0.0, "rheologyIndex": 1.0, "rheologyConsistency": 0.0
+            "tempViscosity": 0.0, "rheologyIndex": 1.0, "rheologyConsistency": 0.0,
+            "surfaceTension": 0.0, "gCohesion": 1.0
         },
         "features": {
             "enableGravity": false, "enableBuoyancy": true, "enableVorticity": false,
-            "enableSmagorinsky": true, "enableTempViscosity": false, "enableNonNewtonian": false
+            "enableSmagorinsky": true, "enableTempViscosity": false, "enableNonNewtonian": false,
+            "enableSurfaceTension": false
         },
         "visualization": {
             "mode": 2, "colorScheme": 6, "contrast": 1.2, "brightness": 1.1,
@@ -61,11 +65,13 @@
             "boundaryLeft": 1, "boundaryRight": 1, "boundaryTop": 1, "boundaryBottom": 1,
             "gravityX": 0, "gravityY": -1.2, "thermalExpansion": 2.5, "thermalDiffusivity": 0.005,
             "vorticityConfinement": 0.02, "maxVelocity": 0.57, "smagorinsky": 0.0,
-            "tempViscosity": 1.5, "rheologyIndex": 1, "rheologyConsistency": 0
+            "tempViscosity": 1.5, "rheologyIndex": 1, "rheologyConsistency": 0,
+            "surfaceTension": 0.0, "gCohesion": 1.0
         },
         "features": {
             "enableGravity": true, "enableBuoyancy": true, "enableVorticity": true,
-            "enableSmagorinsky": false, "enableTempViscosity": true, "enableNonNewtonian": false
+            "enableSmagorinsky": false, "enableTempViscosity": true, "enableNonNewtonian": false,
+            "enableSurfaceTension": false
         },
         "visualization": {
             "mode": 3, "colorScheme": 0, "contrast": 1.5, "brightness": 1.2,
@@ -88,11 +94,13 @@
             "boundaryLeft": 0, "boundaryRight": 0, "boundaryTop": 0, "boundaryBottom": 0,
             "gravityX": 0, "gravityY": 0, "thermalExpansion": 1.2, "thermalDiffusivity": 0.0005,
             "vorticityConfinement": 0.85, "maxVelocity": 0.57, "smagorinsky": 0.0,
-            "tempViscosity": 0, "rheologyIndex": 1, "rheologyConsistency": 0
+            "tempViscosity": 0, "rheologyIndex": 1, "rheologyConsistency": 0,
+            "surfaceTension": 0.0, "gCohesion": 1.0
         },
         "features": {
             "enableGravity": false, "enableBuoyancy": true, "enableVorticity": true,
-            "enableSmagorinsky": false, "enableTempViscosity": false, "enableNonNewtonian": false
+            "enableSmagorinsky": false, "enableTempViscosity": false, "enableNonNewtonian": false,
+            "enableSurfaceTension": false
         },
         "visualization": {
             "mode": 0, "colorScheme": 8, "contrast": 2.5, "brightness": 1.1,

@@ -39,6 +39,9 @@ public:
     void setSpongeProperties(float strength, int width);
     void setSpongeBoundaries(bool left, bool right, bool top, bool bottom);
 
+    void setSurfaceTension(float st);
+    void setGCohesion(float g);
+
     void setThreadCount(int count);
     void setBFECC(bool enable);
     
@@ -68,6 +71,8 @@ private:
     float omega; 
     float decay;
     float globalDrag;
+    float surfaceTension;
+    float gCohesion;
     float dt;
     int boundaryLeft, boundaryRight, boundaryTop, boundaryBottom;
 
@@ -150,6 +155,7 @@ private:
     void initThreadPool(int count);
 
     void equilibrium(float r, float u, float v, float* feq);
+    void applySurfaceTension();
     void collideAndStream();
     void advectDye();
     void advectTemperature();

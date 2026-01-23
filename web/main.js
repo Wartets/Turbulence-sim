@@ -51,6 +51,8 @@ createFluidEngine().then(Module => {
             porosityDrag: 0.5,
             spongeStrength: 0.05,
             spongeWidth: 20,
+            surfaceTension: 0.0,
+            gCohesion: 1.0,
         },
 
         features: {
@@ -65,6 +67,7 @@ createFluidEngine().then(Module => {
             spongeRight: false,
             spongeTop: false,
             spongeBottom: false,
+            enableSurfaceTension: false,
         },
         
         visualization: {
@@ -208,6 +211,16 @@ createFluidEngine().then(Module => {
         );
     };
     
+    const updateSurfaceTension = () => {
+        if (!engine) return;
+        if (params.features.enableSurfaceTension) {
+            engine.setSurfaceTension(params.physics.surfaceTension);
+            engine.setGCohesion(params.physics.gCohesion);
+        } else {
+            engine.setSurfaceTension(0.0);
+        }
+    };
+
     const updateWall = (side, value) => {
         if(!engine) return;
         if(side === 'Top' || side === 'Bottom') engine.setMovingWallVelocity(side === 'Top' ? 2 : 3, value, 0);
@@ -391,6 +404,15 @@ createFluidEngine().then(Module => {
     viewFolder.addColor(params.visualization, 'backgroundColor').name('Background Color');
     viewFolder.add(params.visualization, 'vorticityBipolar').name('Bipolar Map');
     
+    const surfaceTensionFolder = physicsFolder.addFolder('Surface Tension (Shan-Chen)').close();
+    const surfaceTensionController = surfaceTensionFolder.add(params.physics, 'surfaceTension', 0.0, 0.5).name('Tension Strength').step(0.001).onChange(updateSurfaceTension);
+    const gCohesionController = surfaceTensionFolder.add(params.physics, 'gCohesion', 0.1, 10.0).name('Cohesion (G)').step(0.1).onChange(updateSurfaceTension);
+    surfaceTensionFolder.add(params.features, 'enableSurfaceTension').name('Enable').onChange(enabled => {
+        surfaceTensionController.enable(enabled);
+        gCohesionController.enable(enabled);
+        updateSurfaceTension();
+    });
+
     const particleFolder = viewFolder.addFolder('Particles').close();
     particleFolder.add(params.particles, 'show').name('Show Particles').listen();
     particleFolder.add(params.particles, 'count', 0, 1000000, 10000).name('Particle Count').onChange(count => {
@@ -527,6 +549,7 @@ createFluidEngine().then(Module => {
         engine.setMaxVelocity(params.physics.maxVelocity);
         engine.setPorosityDrag(params.physics.porosityDrag);
         updateSponge();
+        updateSurfaceTension();
         
         if (typeof engine.setThreadCount === 'function') {
             engine.setThreadCount(params.simulation.threads);

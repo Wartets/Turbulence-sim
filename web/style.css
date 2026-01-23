@@ -1,18 +1,28 @@
+:root {
+    --color-border: rgba(255, 255, 255, 0.1);
+    --color-text-primary: #ffffff;
+    --color-text-secondary: #aaaaaa;
+    --color-accent: #AF8686;
+}
+
 body, html {
     margin: 0;
     padding: 0;
     width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background-color: #000;
+    min-height: 100%;
+    background-color: #1B1212;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow-x: hidden;
 }
 
 canvas {
     display: block;
     width: 100%;
-    height: 100%;
+    height: 95vh;
     image-rendering: smooth;
+    border-bottom-left-radius: 1.5rem;
+    border-bottom-right-radius: 1.5rem;
+    background-color: #000;
 }
 
 #fps-counter {
@@ -26,4 +36,74 @@ canvas {
     font-family: 'Courier New', Courier, monospace;
     font-size: 11px;
     z-index: 100;
+}
+
+.site-footer {
+    padding: 0.5rem 2rem;
+    background-color: #1B1212;
+    color: var(--color-text-secondary);
+    font-size: 0.85rem;
+    position: relative;
+    z-index: 10;
+}
+
+.footer-content {
+    max-width: 100%;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.footer-left {
+    text-align: left;
+}
+
+.footer-nav {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    justify-content: flex-end;
+}
+
+.footer-link {
+    color: var(--color-text-primary);
+    text-decoration: none;
+    font-weight: 500;
+    transition: color 0.3s ease;
+}
+
+.footer-link i {
+    font-size: 0.9em;
+    margin-left: 2px;
+    opacity: 0.7;
+    transition: transform 0.3s ease;
+}
+
+.footer-link:hover {
+    color: var(--color-accent);
+}
+
+.footer-link:hover i {
+    transform: translate(2px, -2px);
+    opacity: 1;
+}
+
+.divider {
+    width: 4px;
+    height: 4px;
+    background: var(--color-border);
+    border-radius: 50%;
+}
+
+#xp-portfolio-link img {
+    height: 0.9rem;
+    width: auto;
+    display: block;
+    transition: transform 0.2s ease;
+}
+
+#xp-portfolio-link:hover img {
+    transform: scale(1.1);
 }

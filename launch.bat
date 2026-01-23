@@ -40,17 +40,17 @@ echo     allow_reuse_address = True
 echo class COOPCOEPHandler(http.server.SimpleHTTPRequestHandler^):
 echo     def end_headers(self^):
 echo         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0'^)
-echo         self.send_header('Pragma', 'no-cache'^)
-echo         self.send_header('Expires', '0'^)
 echo         self.send_header('Cross-Origin-Opener-Policy', 'same-origin'^)
 echo         self.send_header('Cross-Origin-Embedder-Policy', 'require-corp'^)
+echo         self.send_header('Cross-Origin-Resource-Policy', 'cross-origin'^)
+echo         self.send_header('Access-Control-Allow-Origin', '*'^)
 echo         super(^).end_headers(^)
 echo if __name__ == '__main__':
 echo     if len(sys.argv^) ^> 2:
 echo         os.chdir(sys.argv[2]^)
 echo     socketserver.TCPServer.allow_reuse_address = True
 echo     with ThreadedHTTPServer(("", PORT^), COOPCOEPHandler^) as httpd:
-echo         print(f"Serving on port {PORT} with Multi-threaded Optimization"^)
+echo         print(f"Serving on port {PORT}"^)
 echo         httpd.serve_forever(^)
 ) > "%SERVER_SCRIPT%"
 
@@ -109,6 +109,8 @@ copy /Y style.css "%OUT_DIR%\" >nul
 copy /Y main.js "%OUT_DIR%\" >nul
 copy /Y renderer.js "%OUT_DIR%\" >nul
 copy /Y shaders.js "%OUT_DIR%\" >nul
+copy /Y xp-computer-icon.webp "%OUT_DIR%\" >nul
+copy /Y favicon.ico "%OUT_DIR%\" >nul
 
 :: Compile to TEMP folder first
 set "TEMP_OUT=%TEMP_BUILD_DIR%\engine.js"

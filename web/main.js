@@ -261,13 +261,13 @@ createFluidEngine().then(Module => {
         .then(data => {
             presetsData = data;
             const presetNames = Object.keys(data);
-            const presetFolder = gui.addFolder('Presets').close();
+            const presetFolder = gui.addFolder('Presets');
             presetFolder.add(params, 'preset', presetNames).name('Select Preset').onChange(name => {
                 if (presetsData[name]) {
                     applyPresetDeep(params, presetsData[name]);
                 }
             });
-            presetFolder.open();
+            presetFolder.close();
         })
         .catch(err => console.error('Failed to load presets:', err));
 
@@ -488,7 +488,7 @@ createFluidEngine().then(Module => {
         if (engine) engine.delete();
 
         canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        canvas.height = window.innerHeight * 0.95;
 
         const aspect = canvas.width / canvas.height;
         const baseRes = parseInt(params.simulation.resolutionScale);

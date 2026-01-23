@@ -2,13 +2,32 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer-when-downgrade">
     <title>Navier-Stokes Turbulence</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
 </head>
 <body>
     <canvas id="simCanvas"></canvas>
     <div id="fps-counter"></div>
-    
+    <footer class="site-footer">
+        <div class="footer-content">
+            <div class="footer-left">
+                <span class="copyright">&copy; 2026 All rights reserved. Licensed under the <a href="https://github.com/Wartets/Turbulence-sim/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" class="footer-link">MIT License</a>.</span>
+            </div>
+            <nav class="footer-nav">
+                <span>Designed by <a href="https://wartets.github.io/Wartets/" target="_blank" rel="noopener noreferrer" class="footer-link" crossorigin="anonymous">Wartets <i class="fa-solid fa-arrow-up-right-from-square"></i></a></span>
+                <span class="divider"></span>
+                <span>GitHub <a href="https://github.com/wartets" target="_blank" rel="noopener noreferrer" class="footer-link" crossorigin="anonymous"><i class="fa-brands fa-github"></i></a></span>
+                <span class="divider"></span>
+                <a href="window/index.html" target="_blank" id="xp-portfolio-link" title="Discover the Windows XP Version">
+                    <img src="xp-computer-icon.webp" alt="Windows">
+                </a>
+            </nav>
+        </div>
+    </footer>
     <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.17"></script>
     <script src="engine.js"></script>
     <script src="shaders.js"></script>
